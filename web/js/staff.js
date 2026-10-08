@@ -98,7 +98,7 @@ PAGES.dashboard = async (el) => {
     <div class="grid g-4">
       ${stat('student', 'tint-blue', num(d.counts.students), 'Students', `${num(d.counts.classes)} classes · ${num(d.counts.teachers)} teachers`)}
       ${stat('calendar', 'tint-green', marked ? pct + '%' : '—', "Today's attendance", `${a.absent} absent · ${a.late} late · ${a.unmarked} unmarked`)}
-      ${stat('money', 'tint-red', money(d.fees.outstanding), 'Outstanding fees', `${d.fees.overdue_count} overdue (${money(d.fees.overdue_amount)})`)}
+      ${stat('money', 'tint-red', 'Rs. ' + num(Math.round(d.fees.outstanding)), 'Outstanding fees', `${d.fees.overdue_count} overdue (${money(d.fees.overdue_amount)})`)}
       ${stat('send', 'tint-violet', num(d.sent_today), 'Messages sent today', `${num(d.counts.parents)} parents connected`)}
     </div>
     <div class="card"><div class="card-b row">
@@ -211,7 +211,7 @@ PAGES.compose = async (el) => {
     $('#pvWa', el).textContent = full; $('#pvSms', el).textContent = full;
     const len = full.length, unicode = /[^\x00-\x7F]/.test(full), per = unicode ? 70 : 160;
     $('#smsParts', el).textContent = `· ${len} chars · ${Math.ceil(len / per)} SMS part(s)${unicode ? ' (Unicode)' : ''}`;
-    $('#charCount', el).textContent = `${b.length} characters`;
+    $('#charCount', el).textContent = `${form.elements.body.value.length} characters`;
   };
   form.addEventListener('input', preview); preview();
 

@@ -1,0 +1,6 @@
+.env
+data/
+epoch-school
+*.db
+*.db-shm
+*.db-wal

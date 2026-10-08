@@ -34,7 +34,7 @@ function renderLogin() {
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('button', e.target); btn.disabled = true;
-    try { await POST('/api/login', readForm(e.target)); location.hash = '#/'; await boot(); }
+    try { await POST('/api/login', readForm(e.target)); history.replaceState(null, '', '#/'); await boot(); }
     catch (err) { toast(err.message, 'error'); btn.disabled = false; }
   });
 }
@@ -42,7 +42,7 @@ function renderLogin() {
 async function logout() {
   try { await POST('/api/logout'); } catch {}
   S.me = null; S.classes = null; S.routes = null; P.data = null;
-  location.hash = '';
+  history.replaceState(null, '', location.pathname);
   renderLogin();
 }
 

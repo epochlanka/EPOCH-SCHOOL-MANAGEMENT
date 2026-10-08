@@ -165,8 +165,13 @@ func (a *App) routes() http.Handler {
 	h("POST /api/ai/reply", any, a.handleAIReply)
 	h("POST /api/ai/chat", any, a.handleAIChat)
 
-	static, _ := fs.Sub(webFS, "web")
-	mux.Handle("/", http.FileServer(http.FS(static)))
+	// The UI is embedded in the binary; set WEB_DIR=web during development to serve it from disk.
+	if dir := os.Getenv("WEB_DIR"); dir != "" {
+		mux.Handle("/", http.FileServer(http.Dir(dir)))
+	} else {
+		static, _ := fs.Sub(webFS, "web")
+		mux.Handle("/", http.FileServer(http.FS(static)))
+	}
 	return logRequests(securityHeaders(mux))
 }
 
@@ -175,6 +180,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Cache-Control", "no-cache")
 		next.ServeHTTP(w, r)
 	})
 }
