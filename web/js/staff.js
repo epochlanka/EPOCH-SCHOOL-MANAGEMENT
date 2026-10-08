@@ -642,7 +642,9 @@ PAGES.settings = async (el) => {
         ${field({ name: 'fee_reminder_hour', label: 'Daily reminder time (hour, 0–23)', type: 'number', min: 0, value: s.fee_reminder_hour })}
       </div></div>
     <div><button class="btn primary">${icon('check')} Save settings</button></div>
-  </form>`;
+  </form>
+  <div id="dbcard" class="stack" style="margin-top:18px"></div>`;
+  renderStorage($('#dbcard', el));
   $('#tsend', el).onclick = async () => {
     try { const r = await POST('/api/settings/test-message', { channel: $('#tch', el).value, to: $('#tto', el).value }); toast('Test result: ' + r.status, 'success'); }
     catch (e) { toast(e.message, 'error'); }
@@ -657,3 +659,72 @@ PAGES.settings = async (el) => {
     try { await PUT('/api/settings', body); S.school.name = v.school_name; toast('Settings saved', 'success'); } catch (err) { toast(err.message, 'error'); }
   });
 };
+
+/* ---------- Database & backups (inside Settings) ---------- */
+const fileSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+
+async function renderStorage(el) {
+  const st = await GET('/api/system/storage');
+  const locked = st.db_source === 'env';
+  const source = { env: 'set by DB_PATH in the server environment', settings: 'chosen in Settings', default: 'default location' }[st.db_source];
+  el.innerHTML = `<div class="card"><div class="card-h"><h3>Database</h3><span class="muted small">Where the school's data is stored on the server</span></div><div class="card-b stack">
+      ${st.notice ? `<div class="list-item" style="padding:8px 0">${catIcon('announcement')}<div class="grow"><div class="t2">${esc(st.notice)}</div></div></div>` : ''}
+      <div class="list-item" style="padding:8px 0"><div class="ic tint-blue">${icon('layers')}</div><div class="grow"><div class="t1"><code>${esc(st.db_path)}</code></div><div class="t2">${fileSize(st.db_size)} · ${esc(source)}</div></div></div>
+      ${locked ? `<p class="muted small">Remove <code>DB_PATH</code> from the server's environment or <code>.env</code> file to change the location here.</p>` : `
+      <form id="dbf" class="form-grid">
+        ${field({ name: 'path', label: 'New database file path', full: true, required: true, placeholder: '/srv/epoch/epoch.db' })}
+        ${field({ name: 'mode', label: 'What to do', type: 'select', full: true, options: [['copy', 'Copy the current data to the new file and use it'], ['open', 'Open a database file that is already there (e.g. a backup)']] }, 'copy')}
+        <p class="muted small" style="grid-column:1/-1">The system restarts for a few seconds to switch files. The current file is left untouched. The location is remembered in <code>${esc(st.config_file)}</code>.</p>
+        <div><button class="btn">${icon('check')} Change database location</button></div>
+      </form>`}
+    </div></div>
+    <div class="card"><div class="card-h"><h3>Backups</h3><span class="spacer"></span>
+      <a class="btn" href="/api/system/backup/download">${icon('refresh')} Download backup</a>
+      <button type="button" class="btn primary" id="bnow">${icon('check')} Back up now</button></div>
+      <form id="bf" class="card-b form-grid">
+        ${field({ name: 'backup_dir', label: 'Backup folder (leave blank for a "backups" folder next to the database)', full: true, placeholder: st.backup_dir }, st.backup_dir_custom ? st.backup_dir : '')}
+        ${field({ name: 'backup_daily', label: 'Make a backup automatically every day', type: 'checkbox' }, st.backup_daily)}
+        ${field({ name: 'backup_keep', label: 'Backups to keep (0 = keep all)', type: 'number', min: 0 }, st.backup_keep)}
+        <div><button class="btn">${icon('check')} Save backup settings</button></div>
+      </form>
+      ${table([{ label: 'Backup file', render: (r) => `<code>${esc(r.name)}</code>` }, { label: 'Size', render: (r) => fileSize(r.size), num: true }, { label: 'Created', render: (r) => esc(r.created) }],
+        st.backups, `No backups yet in ${st.backup_dir}`)}
+      <div class="card-b"><p class="muted small">Backups are complete, consistent copies made while the system is running. ${st.last_backup ? 'Last backup: ' + esc(st.last_backup) + '.' : ''} To restore one, use "Open a database file that is already there" above with the backup's path.</p></div>
+    </div>`;
+
+  $('#bnow', el).onclick = async (e) => {
+    e.target.disabled = true;
+    try { const r = await POST('/api/system/backup'); toast('Backup saved to ' + r.path, 'success'); renderStorage(el); }
+    catch (err) { toast(err.message, 'error'); e.target.disabled = false; }
+  };
+  $('#bf', el).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = readForm(e.target);
+    try { await PUT('/api/system/storage', { backup_dir: v.backup_dir || '', backup_daily: !!v.backup_daily, backup_keep: Number(v.backup_keep || 0) }); toast('Backup settings saved', 'success'); renderStorage(el); }
+    catch (err) { toast(err.message, 'error'); }
+  });
+  const dbf = $('#dbf', el);
+  if (dbf) dbf.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = readForm(e.target);
+    const msg = v.mode === 'open'
+      ? `Switch to the database at ${v.path}? Everyone will be using that file's data from now on, and you may need to sign in again.`
+      : `Copy all data to ${v.path} and use it from now on?`;
+    if (!(await confirmBox(msg, 'Change location'))) return;
+    try {
+      await POST('/api/system/database', v);
+      toast('Switching database, the system is restarting…');
+      await waitForServer();
+      location.reload();
+    } catch (err) { toast(err.message, 'error'); }
+  });
+}
+
+// waitForServer polls until the server answers again after a restart.
+async function waitForServer() {
+  await new Promise((r) => setTimeout(r, 1500));
+  for (let i = 0; i < 40; i++) {
+    try { const res = await fetch('/api/settings', { credentials: 'same-origin' }); if (res.status < 500) return; } catch { /* still restarting */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}

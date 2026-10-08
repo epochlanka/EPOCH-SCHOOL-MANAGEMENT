@@ -23,15 +23,23 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 
 ## Quick start
 
+### Testing (no build)
+
+```bash
+./dev.sh
+```
+
+This runs the system straight from source with `go run`, serves the UI from `web/` (HTML/CSS/JS changes show on refresh), and keeps its own test database in `.dev-data/`, so testing never touches the real school data. Then open http://localhost:8080.
+
+### Production
+
 ```bash
 cp .env.example .env        # then edit it
 go build -o epoch-school .
 ./epoch-school
 ```
 
-Then open http://localhost:8080.
-
-Go 1.24+ is required (this machine has Go installed at `~/.local/go/bin`).
+Go 1.27+ is required (see `go.mod`).
 
 ### Demo logins (when `SEED_DEMO=true`)
 
@@ -71,6 +79,20 @@ Requests opt into Anthropic's server-side refusal fallback (`fallbacks: "default
 Local numbers such as `077 123 4567` become `94771234567` automatically (`DEFAULT_COUNTRY_CODE`).
 In Settings, use **Send test** to check a provider.
 
+## Database & backups
+
+The database is kept **outside the project folder**, by default in `~/.local/share/epoch-school/epoch.db` on Linux (`EPOCH_DATA_DIR` changes the folder). If an older `data/epoch.db` is found in the project folder, it is copied there on first start.
+
+From **Settings → Database** an admin can:
+
+- **Move the database** to another file path. The data is copied and the system restarts itself in a few seconds. The old file is left in place.
+- **Open an existing database file**, e.g. to restore a backup.
+- **Download a backup**, or **Back up now** to a backup folder (default: `backups/` next to the database).
+- Turn on **daily automatic backups** and choose how many to keep.
+
+Backups are consistent snapshots (`VACUUM INTO`) that are safe to take while the system is running. Don't copy the live `.db` file directly, because recent changes may still be in the `-wal` file.
+The chosen path is remembered in `config.json` in the data folder. Setting `DB_PATH` in the environment pins the path and disables the Settings option.
+
 ## Deployment
 
 ```bash
@@ -79,7 +101,7 @@ docker run -d -p 8080:8080 --env-file .env -v epoch-data:/app/data epoch-school
 ```
 
 Put it behind HTTPS (Caddy or Nginx) and set `SECURE_COOKIE=true`.
-To back up, copy the `data/` folder (the SQLite database).
+In Docker the database lives in the `/app/data` volume. Keep any path you choose in Settings inside that volume.
 
 ## Project layout
 
@@ -87,6 +109,7 @@ To back up, copy the `data/` folder (the SQLite database).
 main.go              server, routes, middleware
 config.go            environment configuration
 db.go                schema, settings, demo seed
+storage.go           database location, config file, backups
 auth.go              login, sessions, roles, profile
 handlers_admin.go    dashboard, users, classes, routes, students, settings
 handlers_academic.go attendance, fees and reminders, homework, exams and results
@@ -94,9 +117,8 @@ handlers_comm.go     announcements, notifications, messaging, reports, portal, s
 notify.go            notification engine and SMS/WhatsApp providers
 ai.go                Claude integration (compose, translate, reply, tool-using assistant)
 web/                 embedded frontend (index.html, css/, js/, assets/)
+dev.sh               run from source for testing
 ```
-
-During UI development, run with `WEB_DIR=web` to serve the frontend from disk instead of the embedded copy.
 
 ---
 Epoch · *Empowering possibilities through technology* · epochadminlk@gmail.com

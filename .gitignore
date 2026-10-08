@@ -4,3 +4,4 @@ epoch-school
 *.db
 *.db-shm
 *.db-wal
+.dev-data/

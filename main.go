@@ -8,12 +8,14 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -28,6 +30,11 @@ type App struct {
 	notify  *Notifier
 	ai      *AI
 	limiter *loginLimiter
+
+	store    *storage
+	dbPath   string
+	dbSource string          // "env", "settings" or "default"
+	restart  func(*dbChange) // stops the server so it can reopen with another database
 }
 
 func main() {
@@ -38,44 +45,90 @@ func main() {
 	} else {
 		log.Printf("unknown TZ %q, using system time zone", cfg.TZ)
 	}
-
-	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
-		log.Fatal(err)
-	}
-	db, err := openDB(cfg.DBPath)
+	store, err := loadStorage(cfg.ConfigFile)
 	if err != nil {
-		log.Fatalf("database: %v", err)
-	}
-	defer db.Close()
-
-	app := &App{db: db, cfg: cfg, limiter: newLoginLimiter()}
-	app.notify = newNotifier(app)
-	app.ai = newAI(app)
-	if err := app.seed(); err != nil {
-		log.Fatalf("seed: %v", err)
+		log.Fatalf("config: %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go app.notify.run(ctx)
-	go app.runScheduler(ctx)
+	// serve returns a change when the admin picks another database in Settings;
+	// the server then starts again on the new file.
+	for {
+		change, err := serve(ctx, cfg, store)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if change == nil {
+			return
+		}
+		log.Printf("Restarting...")
+	}
+}
+
+func serve(ctx context.Context, cfg Config, store *storage) (*dbChange, error) {
+	dbPath, source := store.dbPath(cfg)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return nil, err
+	}
+	migrateLegacyDB(dbPath, source)
+	db, err := openDB(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("database %s: %w", dbPath, err)
+	}
+	defer db.Close()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	changes := make(chan *dbChange, 1)
+	app := &App{db: db, cfg: cfg, limiter: newLoginLimiter(), store: store, dbPath: dbPath, dbSource: source}
+	app.restart = func(c *dbChange) {
+		select {
+		case changes <- c:
+			cancel()
+		default: // a change is already in progress
+		}
+	}
+	app.notify = newNotifier(app)
+	app.ai = newAI(app)
+	if err := app.seed(); err != nil {
+		return nil, fmt.Errorf("seed: %w", err)
+	}
+
+	var workers sync.WaitGroup
+	workers.Go(func() { app.notify.run(runCtx) })
+	workers.Go(func() { app.runScheduler(runCtx) })
+	workers.Go(func() { app.runBackups(runCtx) })
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           app.routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	stopped := make(chan struct{})
 	go func() {
-		<-ctx.Done()
+		defer close(stopped)
+		<-runCtx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
 	}()
 
 	log.Printf("Epoch School System running on http://localhost%s", displayAddr(cfg.Addr))
+	log.Printf("Database: %s (%s)", dbPath, source)
 	log.Printf("SMS provider: %s | WhatsApp provider: %s | AI: %s", app.notify.sms.Name(), app.notify.wa.Name(), app.ai.statusText())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+		return nil, err
+	}
+	<-stopped
+	workers.Wait()
+
+	select {
+	case c := <-changes:
+		applyDBChange(store, db, c)
+		return c, nil
+	default:
+		return nil, nil
 	}
 }
 
@@ -121,6 +174,11 @@ func (a *App) routes() http.Handler {
 	h("GET /api/settings", any, a.handleGetSettings)
 	h("PUT /api/settings", admin, a.handlePutSettings)
 	h("POST /api/settings/test-message", admin, a.handleTestMessage)
+	h("GET /api/system/storage", admin, a.handleGetStorage)
+	h("PUT /api/system/storage", admin, a.handlePutStorage)
+	h("POST /api/system/backup", admin, a.handleBackupNow)
+	h("GET /api/system/backup/download", admin, a.handleDownloadBackup)
+	h("POST /api/system/database", admin, a.handleChangeDatabase)
 
 	// Academic
 	h("GET /api/attendance", staff, a.handleGetAttendance)
