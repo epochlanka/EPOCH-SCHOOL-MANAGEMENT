@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 type Config struct {
 	Addr         string
-	DBPath       string
+	DBPath       string // set only when DB_PATH is given; otherwise chosen in Settings (see storage.go)
+	ConfigFile   string
 	TZ           string
 	CountryCode  string
 	SecureCookie bool
@@ -50,7 +52,8 @@ func env(key, def string) string {
 func loadConfig() Config {
 	return Config{
 		Addr:         env("ADDR", ":8080"),
-		DBPath:       env("DB_PATH", "data/epoch.db"),
+		DBPath:       env("DB_PATH", ""),
+		ConfigFile:   env("EPOCH_CONFIG", filepath.Join(appDataDir(), "config.json")),
 		TZ:           env("TZ", "Asia/Colombo"),
 		CountryCode:  env("DEFAULT_COUNTRY_CODE", "94"),
 		SecureCookie: env("SECURE_COOKIE", "false") == "true",

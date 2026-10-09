@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -74,10 +75,13 @@ func newNotifier(a *App) *Notifier {
 	return n
 }
 
-// run starts delivery workers and re-queues anything left over from a previous run.
+// run starts delivery workers, re-queues anything left over from a previous run and
+// returns once the workers have stopped.
 func (n *Notifier) run(ctx context.Context) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	for i := 0; i < 4; i++ {
-		go func() {
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -86,7 +90,7 @@ func (n *Notifier) run(ctx context.Context) {
 					n.deliver(ctx, j)
 				}
 			}
-		}()
+		})
 	}
 	rows, err := n.a.db.Query(`SELECT id,channel,recipient,message FROM deliveries WHERE status='queued' ORDER BY id`)
 	if err != nil {
