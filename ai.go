@@ -274,7 +274,7 @@ Draft one reply the user can send as-is: polite, helpful, and concise. Do not pr
 
 type aiTool struct {
 	def   anthropic.ToolParam
-	roles []string
+	roles []string // "staff" = staff with the ai.data permission
 	run   func(u *User, input json.RawMessage) (any, error)
 }
 
@@ -287,7 +287,7 @@ func tool(name, desc string, props map[string]any, required []string) anthropic.
 }
 
 func (a *App) assistantTools() []aiTool {
-	staff := []string{"admin", "teacher"}
+	staff := []string{"staff"}
 	family := []string{"parent", "student"}
 	str := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 	num := func(desc string) map[string]any { return map[string]any{"type": "integer", "description": desc} }
@@ -300,7 +300,12 @@ func (a *App) assistantTools() []aiTool {
 				t := today()
 				return map[string]any{
 					"students":            a.scalar(`SELECT COUNT(*) FROM students`),
-					"teachers":            a.scalar(`SELECT COUNT(*) FROM users WHERE role='teacher' AND active=1`),
+					"teaching_staff":      a.scalar(`SELECT COUNT(*) FROM users WHERE role IN ` + teachingRolesSQL + ` AND active=1`),
+					"teachers_on_leave":   len(a.staffOnLeave(t)),
+					"teachers_absent":     a.scalar(`SELECT COUNT(*) FROM staff_attendance WHERE date=? AND status='absent'`, t),
+					"pending_leave":       a.scalar(`SELECT COUNT(*) FROM leave_requests WHERE status='pending'`),
+					"relief_periods":      a.scalar(`SELECT COUNT(*) FROM substitutions WHERE date=? AND status='assigned'`, t),
+					"uncovered_periods":   a.scalar(`SELECT COUNT(*) FROM substitutions WHERE date=? AND status='unfilled'`, t),
 					"parents":             a.scalar(`SELECT COUNT(*) FROM users WHERE role='parent' AND active=1`),
 					"present_today":       a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=? AND status='present'`, t),
 					"absent_today":        a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=? AND status='absent'`, t),
@@ -401,6 +406,51 @@ func (a *App) assistantTools() []aiTool {
 			},
 		},
 		{
+			def: tool("get_staff_today", "Teacher attendance for a date: who is present, late, absent or on leave, pending leave requests, and relief (substitute) teacher assignments.",
+				map[string]any{"date": str("Date as YYYY-MM-DD; defaults to today")}, nil),
+			roles: staff,
+			run: func(u *User, in json.RawMessage) (any, error) {
+				var p struct{ Date string }
+				json.Unmarshal(in, &p)
+				if !validDate(p.Date) {
+					p.Date = today()
+				}
+				att, err := a.queryMaps(`SELECT u.name, u.role, COALESCE(sa.status,'not marked') AS status, COALESCE(sa.check_in,'') AS check_in
+					FROM users u LEFT JOIN staff_attendance sa ON sa.user_id=u.id AND sa.date=? WHERE u.active=1 AND u.role IN `+staffRolesSQL, p.Date)
+				if err != nil {
+					return nil, err
+				}
+				leave, _ := a.queryMaps(`SELECT u.name, l.leave_type, l.from_date, l.to_date, l.status, l.reason FROM leave_requests l JOIN users u ON u.id=l.user_id
+					WHERE l.status='pending' OR (l.status='approved' AND ? BETWEEN l.from_date AND l.to_date)`, p.Date)
+				subs, _ := a.queryMaps(`SELECT x.period, c.name||' - '||c.section AS class, s.name AS subject, ab.name AS absent_teacher, sb.name AS relief_teacher, x.status
+					FROM substitutions x JOIN classes c ON c.id=x.class_id LEFT JOIN subjects s ON s.id=x.subject_id LEFT JOIN users ab ON ab.id=x.absent_teacher_id
+					LEFT JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? ORDER BY x.period`, p.Date)
+				return map[string]any{"date": p.Date, "attendance": att, "leave": leave, "substitutions": subs}, nil
+			},
+		},
+		{
+			def: tool("get_timetable", "Weekly timetable for a class (by class name, e.g. 'Grade 8 A') or a teacher (by name). Day 1 is Monday.",
+				map[string]any{"class_name": str("Class name"), "teacher_name": str("Teacher name")}, nil),
+			roles: staff,
+			run: func(u *User, in json.RawMessage) (any, error) {
+				var p struct {
+					ClassName   string `json:"class_name"`
+					TeacherName string `json:"teacher_name"`
+				}
+				json.Unmarshal(in, &p)
+				q := `SELECT t.day, t.period, c.name||' '||c.section AS class, s.name AS subject, u.name AS teacher FROM timetable t
+					JOIN classes c ON c.id=t.class_id JOIN subjects s ON s.id=t.subject_id LEFT JOIN users u ON u.id=t.teacher_id WHERE `
+				var rows []map[string]any
+				var err error
+				if p.TeacherName != "" {
+					rows, err = a.queryMaps(q+`u.name LIKE ? ORDER BY t.day, t.period`, "%"+p.TeacherName+"%")
+				} else {
+					rows, err = a.queryMaps(q+`(c.name||' '||c.section) LIKE ? ORDER BY t.day, t.period`, "%"+strings.ReplaceAll(p.ClassName, "-", "")+"%")
+				}
+				return map[string]any{"period_times": a.timetableConfig().Times, "entries": rows}, err
+			},
+		},
+		{
 			def: tool("get_communication_stats", "Messages sent by channel, status and category over the last N days.",
 				map[string]any{"days": num("Number of days to look back (default 7)")}, nil),
 			roles: staff,
@@ -472,7 +522,7 @@ func (a *App) handleAIChat(w http.ResponseWriter, r *http.Request, u *User) {
 	var toolParams []anthropic.ToolUnionParam
 	for _, t := range a.assistantTools() {
 		for _, role := range t.roles {
-			if role == u.Role {
+			if role == u.Role || (role == "staff" && hasPerm(u.Role, PAIData)) {
 				t := t
 				tools = append(tools, t)
 				toolParams = append(toolParams, anthropic.ToolUnionParam{OfTool: &t.def})
@@ -491,12 +541,14 @@ func (a *App) handleAIChat(w http.ResponseWriter, r *http.Request, u *User) {
 	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock(req.Message)))
 
 	var persona string
-	if u.Role == "admin" || u.Role == "teacher" {
+	if hasPerm(u.Role, PAIData) {
 		persona = "You are Epoch AI, the assistant inside the school's management system, helping school staff. Use the tools to look up live school data before answering questions about students, attendance, fees, exams or communications. Give concrete, actionable answers; when useful, suggest what message to send and to whom. Format answers with short paragraphs and bullet lists (Markdown)."
+	} else if isStaff(u.Role) {
+		persona = "You are Epoch AI, the assistant inside the school's management system. You help " + roleLabel(u.Role) + " staff draft messages, plan work and answer general questions. You do not have access to school records in this conversation. Format answers with short paragraphs and bullet lists (Markdown)."
 	} else {
 		persona = "You are Epoch AI, a helpful assistant for parents and students of the school. You can only access information about the signed-in user's own children through the tools. Use list_my_children first to find student ids. Explain attendance, fees, homework, exams and results kindly and clearly. If asked about other students, politely decline. Format answers with short paragraphs and bullet lists (Markdown)."
 	}
-	system := persona + "\n" + a.schoolContext() + fmt.Sprintf("\nSigned-in user: %s (%s). Reply in the language the user writes in (English, Sinhala or Tamil).", u.Name, u.Role)
+	system := persona + "\n" + a.schoolContext() + fmt.Sprintf("\nSigned-in user: %s (%s). Reply in the language the user writes in (English, Sinhala or Tamil).", u.Name, roleLabel(u.Role))
 
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
 	defer cancel()

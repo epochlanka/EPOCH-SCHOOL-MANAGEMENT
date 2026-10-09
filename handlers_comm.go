@@ -62,6 +62,7 @@ func (a *App) handleListAnnouncements(w http.ResponseWriter, r *http.Request, u 
 	rows, err := a.queryMaps(`SELECT an.*, u.name AS created_by_name,
 		CASE an.audience WHEN 'class' THEN (SELECT name||' - '||section FROM classes WHERE id=an.audience_id)
 			WHEN 'route' THEN (SELECT name FROM routes WHERE id=an.audience_id)
+			WHEN 'section' THEN (SELECT name FROM sections WHERE id=an.audience_id)
 			WHEN 'user' THEN (SELECT name FROM users WHERE id=an.audience_id) ELSE '' END AS audience_label
 		FROM announcements an LEFT JOIN users u ON u.id=an.created_by ORDER BY an.id DESC LIMIT 200`)
 	if err != nil {
@@ -79,7 +80,12 @@ func (a *App) audienceIDs(audience string, id int64, sender int64) ([]int64, err
 	case "parents":
 		return a.queryIDs(`SELECT id FROM users WHERE active=1 AND role='parent'`)
 	case "teachers":
-		return a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN ('teacher','admin') AND id<>?`, sender)
+		return a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN `+staffRolesSQL+` AND id<>?`, sender)
+	case "teaching":
+		return a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN `+teachingRolesSQL+` AND id<>?`, sender)
+	case "section":
+		return a.queryIDs(`SELECT s.parent_id FROM students s JOIN classes c ON c.id=s.class_id WHERE c.section_id=?
+			UNION SELECT s.user_id FROM students s JOIN classes c ON c.id=s.class_id WHERE c.section_id=?`, id, id)
 	case "students":
 		return a.queryIDs(`SELECT id FROM users WHERE active=1 AND role='student'`)
 	case "class":
@@ -112,6 +118,13 @@ func (a *App) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request, u
 	if req.Title == "" || req.Body == "" || channels == "" {
 		errJSON(w, 400, "Title, message and at least one channel are required")
 		return
+	}
+	if !hasPerm(u.Role, PAnnounceAll) {
+		ok := req.Audience == "user" || ((req.Audience == "class" || req.Audience == "class_parents") && a.inClassScope(u, PAcademic, req.AudienceID))
+		if !ok {
+			errJSON(w, 403, "You can send to your own classes or to one person")
+			return
+		}
 	}
 	ids, err := a.audienceIDs(req.Audience, req.AudienceID, u.ID)
 	if err != nil {
@@ -157,28 +170,31 @@ func (a *App) handleReadNotification(w http.ResponseWriter, r *http.Request, u *
 // canMessage enforces who may talk to whom: parents and students can only
 // message staff; staff can message anyone.
 func canMessage(from, toRole string) bool {
-	if from == "admin" || from == "teacher" {
-		return true
-	}
-	return toRole == "admin" || toRole == "teacher"
+	return isStaff(from) || isStaff(toRole)
 }
 
 func (a *App) handleContacts(w http.ResponseWriter, r *http.Request, u *User) {
 	var rows []map[string]any
 	var err error
-	switch u.Role {
-	case "admin", "teacher":
+	if isStaff(u.Role) {
 		rows, err = a.queryMaps(`SELECT u.id,u.name,u.role,
-			(SELECT group_concat(s.name, ', ') FROM students s WHERE s.parent_id=u.id) AS detail
-			FROM users u WHERE u.active=1 AND u.id<>? AND u.role IN ('admin','teacher','parent') ORDER BY u.role, u.name`, u.ID)
-	default:
+			COALESCE((SELECT group_concat(s.name, ', ') FROM students s WHERE s.parent_id=u.id),
+				(SELECT group_concat(c.name||' - '||c.section, ', ') FROM classes c WHERE c.teacher_id=u.id)) AS detail
+			FROM users u WHERE u.active=1 AND u.id<>? AND u.role<>'student' ORDER BY u.role='parent', u.name`, u.ID)
+	} else {
+		// Families see their children's class and subject teachers first, then school management and office.
 		rows, err = a.queryMaps(`SELECT u.id,u.name,u.role,
-			(SELECT group_concat(c.name||' - '||c.section, ', ') FROM classes c WHERE c.teacher_id=u.id) AS detail
-			FROM users u WHERE u.active=1 AND u.role IN ('admin','teacher') ORDER BY u.role DESC, u.name`)
+			(SELECT group_concat(c.name||' - '||c.section, ', ') FROM classes c WHERE c.teacher_id=u.id) AS detail,
+			EXISTS(SELECT 1 FROM students s JOIN classes c ON c.id=s.class_id WHERE (s.parent_id=? OR s.user_id=?)
+				AND (c.teacher_id=u.id OR EXISTS(SELECT 1 FROM class_subjects cs WHERE cs.class_id=c.id AND cs.teacher_id=u.id))) AS mine
+			FROM users u WHERE u.active=1 AND u.role IN `+staffRolesSQL+` ORDER BY mine DESC, u.name`, u.ID, u.ID)
 	}
 	if err != nil {
 		serverError(w, err)
 		return
+	}
+	for _, row := range rows {
+		row["role_label"] = roleLabel(row["role"].(string))
 	}
 	writeJSON(w, 200, rows)
 }
@@ -213,9 +229,10 @@ func (a *App) handleThread(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 403, "You cannot message this user")
 		return
 	}
-	if u.Role == "parent" || u.Role == "student" {
+	if !isStaff(u.Role) {
 		delete(contact, "phone")
 	}
+	contact["role_label"] = roleLabel(contact["role"].(string))
 	msgs, err := a.threadMessages(u.ID, other, 200)
 	if err != nil {
 		serverError(w, err)
@@ -336,11 +353,18 @@ func (a *App) handlePortal(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	bus, _ := a.queryMaps(`SELECT message,created_at FROM bus_updates WHERE route_id=? ORDER BY id DESC LIMIT 5`, routeID)
 	notifications, _ := a.queryMaps(`SELECT id,category,title,body,is_read,created_at FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 20`, u.ID)
+	cfg := a.timetableConfig()
+	timetable, _ := a.queryMaps(`SELECT t.day, t.period, s.name AS subject_name, u.name AS teacher_name,
+		(SELECT sb.name FROM substitutions x JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? AND x.class_id=t.class_id AND x.period=t.period AND t.day=?) AS relief_teacher
+		FROM timetable t JOIN subjects s ON s.id=t.subject_id LEFT JOIN users u ON u.id=t.teacher_id WHERE t.class_id=? ORDER BY t.day, t.period`,
+		t, cfg.schoolDay(t), classID)
+	loans, _ := a.queryMaps(`SELECT b.title, l.due_date, CASE WHEN l.due_date<? THEN 1 ELSE 0 END AS overdue FROM loans l JOIN books b ON b.id=l.book_id
+		WHERE l.student_id=? AND l.returned_at=''`, t, sid)
 
 	writeJSON(w, 200, map[string]any{
 		"student": student, "today_status": todayStatus, "attendance": attendance, "attendance_stats": stats,
 		"fees": fees, "homework": homework, "exams": exams, "results": results, "bus_updates": bus,
-		"notifications": notifications,
+		"notifications": notifications, "timetable": timetable, "timetable_config": cfg, "today_day": cfg.schoolDay(t), "loans": loans,
 	})
 }
 

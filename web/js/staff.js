@@ -1,32 +1,44 @@
 /* Staff console (admin & teacher) */
 'use strict';
 
+// perm: permission needed to see the item ('' = every staff member).
 const NAV = [
-  { id: 'dashboard', label: 'Dashboard', icon: 'grid' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'grid', perm: 'dashboard' },
+  { id: 'workspace', label: 'My Day', icon: 'clock', perm: '' },
   { section: 'Communication' },
-  { id: 'compose', label: 'Send Message', icon: 'megaphone' },
-  { id: 'messages', label: 'Messages', icon: 'chat', badge: () => S.unreadMessages },
-  { id: 'ai', label: 'AI Assistant', icon: 'sparkle' },
-  { id: 'reports', label: 'Reports & History', icon: 'chart' },
-  { section: 'School' },
-  { id: 'attendance', label: 'Attendance', icon: 'calendar' },
-  { id: 'students', label: 'Students', icon: 'student' },
-  { id: 'fees', label: 'Fees', icon: 'money' },
-  { id: 'homework', label: 'Homework', icon: 'book' },
-  { id: 'exams', label: 'Exams & Results', icon: 'exam' },
-  { id: 'transport', label: 'Transport', icon: 'bus' },
-  { section: 'Administration', admin: true },
-  { id: 'users', label: 'Users', icon: 'users', admin: true },
-  { id: 'classes', label: 'Classes', icon: 'layers', admin: true },
-  { id: 'settings', label: 'Settings', icon: 'settings', admin: true },
+  { id: 'compose', label: 'Send Message', icon: 'megaphone', perm: 'announce' },
+  { id: 'messages', label: 'Messages', icon: 'chat', perm: '', badge: () => S.unreadMessages },
+  { id: 'ai', label: 'AI Assistant', icon: 'sparkle', perm: '' },
+  { id: 'reports', label: 'Reports & History', icon: 'chart', perm: 'reports' },
+  { section: 'Academics' },
+  { id: 'attendance', label: 'Student Attendance', icon: 'calendar', perm: 'attendance' },
+  { id: 'students', label: 'Students', icon: 'student', perm: 'students.view' },
+  { id: 'timetable', label: 'Timetable', icon: 'diary', perm: '' },
+  { id: 'homework', label: 'Homework', icon: 'book', perm: 'academic' },
+  { id: 'exams', label: 'Exams & Results', icon: 'exam', perm: 'academic' },
+  { section: 'Staff' },
+  { id: 'staffatt', label: 'Teacher Attendance', icon: 'users', perm: 'staff.view' },
+  { id: 'leave', label: 'Leave Requests', icon: 'calendar', perm: '', badge: () => S.pendingLeave },
+  { id: 'subs', label: 'Substitutions', icon: 'refresh', perm: '' },
+  { section: 'Office' },
+  { id: 'fees', label: 'Fees', icon: 'money', perm: 'fees.view' },
+  { id: 'admissions', label: 'Admissions', icon: 'student', perm: 'admissions' },
+  { id: 'library', label: 'Library', icon: 'book', perm: 'library' },
+  { id: 'transport', label: 'Transport', icon: 'bus', perm: ['transport', 'setup'] },
+  { section: 'Administration' },
+  { id: 'users', label: 'Users & Roles', icon: 'shield', perm: 'users' },
+  { id: 'classes', label: 'Sections & Classes', icon: 'layers', perm: 'setup' },
+  { id: 'settings', label: 'Settings', icon: 'settings', perm: 'settings' },
 ];
 const PAGES = {};
-const isAdmin = () => S.me.role === 'admin';
+const navAllowed = (n) => !n.perm || (Array.isArray(n.perm) ? n.perm.some(can) : can(n.perm));
 
 function renderStaff() {
-  const page = (location.hash.slice(2) || 'dashboard').split('/')[0];
-  const nav = NAV.filter((n) => !n.admin || isAdmin());
-  const item = nav.find((n) => n.id === page) || nav[0];
+  const allowed = NAV.filter((n) => n.section || navAllowed(n));
+  // Drop section headings with no visible items under them.
+  const nav = allowed.filter((n, i) => !n.section || (allowed[i + 1] && !allowed[i + 1].section));
+  const page = (location.hash.slice(2) || (can('dashboard') ? 'dashboard' : 'workspace')).split('/')[0];
+  const item = nav.find((n) => n.id === page) || nav.find((n) => n.id === 'workspace');
   $('#app').innerHTML = `<div class="shell" id="shell">
     <aside class="sidebar">
       <div class="side-brand"><img src="assets/logo-mark.png" alt=""><div><b>EPOCH</b><small>${esc(S.school.name)}</small></div></div>
@@ -41,7 +53,7 @@ function renderStaff() {
         <div class="spacer"></div>
         <button class="icon-btn" id="themeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">${icon('moon')}</button>
         <button class="icon-btn" id="bellBtn" title="Notifications" aria-label="Notifications">${icon('bell')}${S.unread ? `<span class="dot">${S.unread}</span>` : ''}</button>
-        <div class="user-chip" id="userChip" title="My profile"><div class="avatar">${esc(initials(S.me.name))}</div><div class="meta"><b>${esc(S.me.name)}</b><br><small>${esc(S.me.role)}</small></div></div>
+        <div class="user-chip" id="userChip" title="My profile"><div class="avatar">${esc(initials(S.me.name))}</div><div class="meta"><b>${esc(S.me.name)}</b><br><small>${esc(S.roleLabel)}</small></div></div>
         <button class="icon-btn" id="logoutBtn" title="Sign out" aria-label="Sign out">${icon('logout')}</button>
       </header>
       <main class="content" id="page">${loading()}</main>
@@ -98,14 +110,30 @@ PAGES.dashboard = async (el) => {
     <div class="grid g-4">
       ${stat('student', 'tint-blue', num(d.counts.students), 'Students', `${num(d.counts.classes)} classes · ${num(d.counts.teachers)} teachers`)}
       ${stat('calendar', 'tint-green', marked ? pct + '%' : '—', "Today's attendance", `${a.absent} absent · ${a.late} late · ${a.unmarked} unmarked`)}
-      ${stat('money', 'tint-red', 'Rs. ' + num(Math.round(d.fees.outstanding)), 'Outstanding fees', `${d.fees.overdue_count} overdue (${money(d.fees.overdue_amount)})`)}
-      ${stat('send', 'tint-violet', num(d.sent_today), 'Messages sent today', `${num(d.counts.parents)} parents connected`)}
+      ${d.can_fees ? stat('money', 'tint-red', 'Rs. ' + num(Math.round(d.fees.outstanding)), 'Outstanding fees', `${d.fees.overdue_count} overdue (${money(d.fees.overdue_amount)})`) : stat('send', 'tint-violet', num(d.sent_today), 'Messages sent today', `${num(d.counts.parents)} parents connected`)}
+      ${stat('users', 'tint-teal', `${d.staff_attendance.present + d.staff_attendance.late}/${d.counts.teachers}`, 'Teachers in school', `${d.staff_attendance.on_leave} on leave · ${d.staff_attendance.absent} absent · ${d.staff_attendance.not_marked} not checked in`)}
+    </div>
+    <div class="grid g-2">
+      <div class="card"><div class="card-h"><h3>Teachers today</h3><span class="spacer"></span>${can('staff.view') ? '<a class="btn sm" href="#/staffatt">Teacher attendance</a>' : ''}</div>
+        <div class="card-b row" style="gap:8px">
+          <span class="badge green">Present ${d.staff_attendance.present}</span><span class="badge amber">Late ${d.staff_attendance.late}</span>
+          <span class="badge blue">On leave ${d.staff_attendance.on_leave}</span><span class="badge red">Absent ${d.staff_attendance.absent}</span>
+          <span class="badge">Not checked in ${d.staff_attendance.not_marked}</span>
+          <span class="spacer"></span><a class="btn sm" href="#/subs">${icon('refresh')} Relief: ${d.substitutions.assigned} covered${d.substitutions.unfilled ? ` · <b style="color:var(--danger)">${d.substitutions.unfilled} uncovered</b>` : ''}</a>
+        </div>
+        ${d.staff_away.length ? d.staff_away.map((s) => `<div class="list-item"><div class="avatar">${esc(initials(s.name))}</div><div class="grow"><div class="t1">${esc(s.name)}</div><div class="t2">${esc(s.role_label)}${s.leave_type ? ' · ' + esc(cap(s.leave_type)) + ' leave' : ''}</div></div>${badge(s.leave_type ? 'leave' : s.status, s.leave_type ? 'On leave' : cap(s.status))}</div>`).join('') : '<div class="empty">All staff are in school.</div>'}
+      </div>
+      <div class="card"><div class="card-h"><h3>Leave requests awaiting approval</h3><span class="spacer"></span><a class="btn sm" href="#/leave">All requests</a></div>
+        ${d.pending_leave.length ? d.pending_leave.map((l) => `<div class="list-item">${catIcon('leave')}<div class="grow"><div class="t1">${esc(l.name)} <span class="muted small">${esc(l.role_label)}</span></div><div class="t2">${esc(l.type_label)} · ${fmtDate(l.from_date)}${l.to_date !== l.from_date ? ' – ' + fmtDate(l.to_date) : ''} (${l.days} day${l.days > 1 ? 's' : ''})${l.reason ? ' · ' + esc(l.reason) : ''}</div></div>
+          ${d.can_approve ? `<div class="row" style="flex-wrap:nowrap"><button class="btn sm success" data-approve="${l.id}">${icon('check')} Approve</button><button class="btn sm danger" data-reject="${l.id}">${icon('x')}</button></div>` : ''}</div>`).join('') : '<div class="empty">No pending leave requests.</div>'}
+      </div>
     </div>
     <div class="card"><div class="card-b row">
       <b>Quick actions</b><span class="spacer"></span>
       <a class="btn" href="#/attendance">${icon('calendar')} Mark attendance</a>
       <a class="btn" href="#/compose">${icon('megaphone')} Send announcement</a>
-      ${isAdmin() ? `<button class="btn" id="qaFees">${icon('money')} Send fee reminders</button>` : ''}
+      ${can('fees.edit') ? `<button class="btn" id="qaFees">${icon('money')} Send fee reminders</button>` : ''}
+      ${can('staff.view') ? `<a class="btn" href="#/staffatt">${icon('users')} Teacher attendance</a>` : ''}
       <a class="btn" href="#/transport">${icon('bus')} Bus update</a>
       <a class="btn ai" href="#/ai">${icon('sparkle')} Ask Epoch AI</a>
     </div></div>
@@ -140,6 +168,8 @@ PAGES.dashboard = async (el) => {
   </div>`;
   const qa = $('#qaFees', el);
   qa && (qa.onclick = sendDueReminders);
+  $$('[data-approve]', el).forEach((b) => b.onclick = () => decideLeave(b.dataset.approve, 'approved', () => PAGES.dashboard(el)));
+  $$('[data-reject]', el).forEach((b) => b.onclick = () => decideLeave(b.dataset.reject, 'rejected', () => PAGES.dashboard(el)));
 };
 function stat(ic, tint, v, l, sub) {
   return `<div class="card stat"><div class="ic ${tint}">${icon(ic)}</div><div style="min-width:0"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="muted small">${esc(sub || '')}</div></div></div>`;
@@ -152,8 +182,9 @@ async function sendDueReminders() {
 
 /* ---------- Compose / announcements ---------- */
 PAGES.compose = async (el) => {
-  await Promise.all([loadClasses(), loadRoutes()]);
-  const [users, history] = await Promise.all([GET('/api/users'), GET('/api/announcements')]);
+  const all = can('announce.all');
+  await Promise.all([loadClasses(false, all ? '' : 'academic'), loadRoutes()]);
+  const [users, history, sections] = await Promise.all([GET('/api/users'), GET('/api/announcements'), GET('/api/sections')]);
   el.innerHTML = `<div class="grid g-main">
     <div class="stack">
       ${S.aiEnabled ? `<div class="ai-panel"><div class="row" style="margin-bottom:10px"><div class="ai-bot">${icon('sparkle')}</div><div><b>Write with Epoch AI</b><div class="muted small">Describe the message — AI drafts the title, full message and SMS version.</div></div></div>
@@ -163,7 +194,7 @@ PAGES.compose = async (el) => {
         <button class="btn ai right" type="submit">${icon('sparkle')} Generate</button></div></form></div>` : `<div class="card card-b small muted">${icon('sparkle', '')} AI writing is off. Add <code>ANTHROPIC_API_KEY</code> to the server's .env to enable it.</div>`}
       <form class="card" id="sendForm"><div class="card-h"><h3>Compose</h3></div><div class="card-b">
         <div class="form-grid">
-          ${field({ name: 'audience', label: 'Send to', type: 'select', options: [['parents', 'All parents'], ['all', 'Everyone'], ['teachers', 'All staff'], ['students', 'All students'], ['class', 'A class (parents + students)'], ['class_parents', 'A class (parents only)'], ['route', 'A bus route'], ['user', 'One person']] })}
+          ${field({ name: 'audience', label: 'Send to', type: 'select', options: all ? [['parents', 'All parents'], ['all', 'Everyone'], ['teachers', 'All staff'], ['teaching', 'All teachers'], ['students', 'All students'], ['section', 'A section (parents + students)'], ['class', 'A class (parents + students)'], ['class_parents', 'A class (parents only)'], ['route', 'A bus route'], ['user', 'One person']] : [['class_parents', 'My class (parents only)'], ['class', 'My class (parents + students)'], ['user', 'One person']] })}
           <div class="field" id="audWrap" style="visibility:hidden"><label id="audLabel">Select</label><select class="input" name="audience_id"></select></div>
           ${field({ name: 'category', label: 'Category', type: 'select', options: [['announcement', 'Announcement / Circular'], ['event', 'Event'], ['fees', 'Fees'], ['exams', 'Exams'], ['homework', 'Homework'], ['transport', 'Transport'], ['attendance', 'Attendance']] })}
           ${field({ name: 'title', label: 'Title', required: true, placeholder: 'e.g. School Announcement' })}
@@ -197,7 +228,8 @@ PAGES.compose = async (el) => {
   const aud = form.elements.audience, audSel = form.elements.audience_id;
   const audOpts = {
     class: ['Class', S.classes.map((c) => [c.id, c.label])], class_parents: ['Class', S.classes.map((c) => [c.id, c.label])],
-    route: ['Bus route', S.routes.map((r) => [r.id, r.name])], user: ['Person', users.map((u) => [u.id, `${u.name} (${u.role})`])],
+    route: ['Bus route', S.routes.map((r) => [r.id, r.name])], user: ['Person', users.map((u) => [u.id, `${u.name} (${u.role_label})`])],
+    section: ['Section', sections.map((s) => [s.id, s.name])],
   };
   aud.onchange = () => {
     const o = audOpts[aud.value];
@@ -213,7 +245,7 @@ PAGES.compose = async (el) => {
     $('#smsParts', el).textContent = `· ${len} chars · ${Math.ceil(len / per)} SMS part(s)${unicode ? ' (Unicode)' : ''}`;
     $('#charCount', el).textContent = `${form.elements.body.value.length} characters`;
   };
-  form.addEventListener('input', preview); preview();
+  form.addEventListener('input', preview); preview(); aud.onchange();
 
   $$('[data-tr]', form).forEach((b) => b.onclick = async () => {
     const text = form.elements.body.value.trim(); if (!text) return toast('Write a message first', 'error');
@@ -302,14 +334,15 @@ PAGES.reports = async (el) => {
 
 /* ---------- Attendance ---------- */
 PAGES.attendance = async (el) => {
-  await loadClasses();
-  if (!S.classes.length) { el.innerHTML = '<div class="card empty">Create a class first.</div>'; return; }
+  await loadClasses(true, 'attendance');
+  if (!S.classes.length) { el.innerHTML = '<div class="card empty">You are not the class teacher of any class yet.</div>'; return; }
   el.innerHTML = `<div class="row" style="margin-bottom:16px"><div class="tabs"><button class="active" data-t="mark">Mark attendance</button><button data-t="report">Attendance report</button></div></div><div id="att"></div>`;
   const tabs = $$('.tabs button', el);
   tabs.forEach((b) => b.onclick = () => { tabs.forEach((x) => x.classList.toggle('active', x === b)); (b.dataset.t === 'mark' ? markView : reportView)(); });
   const box = $('#att', el);
 
   async function markView() {
+    await loadClasses(false, 'attendance');
     box.innerHTML = `<div class="card"><div class="card-h">
       <select class="input" id="cls" style="width:auto">${classOptions().map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select>
       <input class="input" type="date" id="dt" value="${todayStr()}" max="${todayStr()}" style="width:auto">
@@ -344,6 +377,7 @@ PAGES.attendance = async (el) => {
     await load();
   }
   async function reportView() {
+    await loadClasses(false, 'attendance');
     box.innerHTML = `<div class="card"><div class="card-h">
       <select class="input" id="rc" style="width:auto">${classOptions('All classes').map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select>
       <input class="input" type="date" id="rfrom" value="${addDays(-30)}" style="width:auto"><input class="input" type="date" id="rto" value="${todayStr()}" style="width:auto">
@@ -364,7 +398,8 @@ PAGES.attendance = async (el) => {
 
 /* ---------- Students ---------- */
 PAGES.students = async (el) => {
-  await Promise.all([loadClasses(), loadRoutes()]);
+  await Promise.all([loadClasses(true, 'academic'), loadRoutes()]);
+  const isAdmin = () => can('students.edit');
   el.innerHTML = `<div class="card"><div class="card-h">
     <input class="input" id="q" placeholder="Search name, admission no or parent…" style="max-width:280px">
     <select class="input" id="cf" style="width:auto">${classOptions('All classes').map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select>
@@ -421,6 +456,7 @@ PAGES.students = async (el) => {
 /* ---------- Fees ---------- */
 PAGES.fees = async (el) => {
   await loadClasses();
+  const isAdmin = () => can('fees.edit');
   el.innerHTML = `<div class="card"><div class="card-h">
     <div class="tabs" id="ft">${[['', 'All'], ['unpaid', 'Unpaid'], ['overdue', 'Overdue'], ['paid', 'Paid']].map(([v, l], i) => `<button data-v="${v}" class="${i === 1 ? 'active' : ''}">${l}</button>`).join('')}</div>
     <select class="input" id="fc" style="width:auto">${classOptions('All classes').map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select>
@@ -464,7 +500,7 @@ PAGES.fees = async (el) => {
 
 /* ---------- Homework ---------- */
 PAGES.homework = async (el) => {
-  await loadClasses();
+  await loadClasses(true, 'academic');
   el.innerHTML = `<div class="card"><div class="card-h"><select class="input" id="hc" style="width:auto">${classOptions('All classes').map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select><span class="spacer"></span><button class="btn primary" id="add">${icon('plus')} Assign homework</button></div><div id="hl">${loading()}</div></div>`;
   const load = async () => {
     const rows = await GET('/api/homework?class_id=' + $('#hc', el).value);
@@ -489,7 +525,7 @@ PAGES.homework = async (el) => {
 
 /* ---------- Exams ---------- */
 PAGES.exams = async (el) => {
-  await loadClasses();
+  await loadClasses(true, 'academic');
   el.innerHTML = `<div class="card"><div class="card-h"><select class="input" id="ec" style="width:auto">${classOptions('All classes').map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select><span class="spacer"></span><button class="btn primary" id="add">${icon('plus')} Schedule exam</button></div><div id="el">${loading()}</div></div>`;
   const load = async () => {
     const rows = await GET('/api/exams?class_id=' + $('#ec', el).value);
@@ -537,12 +573,13 @@ PAGES.exams = async (el) => {
 /* ---------- Transport ---------- */
 PAGES.transport = async (el) => {
   const [routes, updates] = await Promise.all([loadRoutes(true), GET('/api/bus-updates')]);
+  const isAdmin = () => can('setup');
   el.innerHTML = `<div class="stack">
     <div class="row">${isAdmin() ? `<button class="btn primary" id="addR">${icon('plus')} Add route</button>` : ''}</div>
     <div class="grid g-3">${routes.map((r) => `<div class="card"><div class="card-h">${catIcon('transport')}<div><h3>${esc(r.name)}</h3><div class="muted small">Bus ${esc(r.bus_no || '—')} · ${r.student_count} students</div></div></div>
       <div class="card-b"><div class="small">Driver: <b>${esc(r.driver_name || '—')}</b> ${r.driver_phone ? '· ' + esc(r.driver_phone) : ''}</div>
       ${r.last_update ? `<div class="preview-phone mt small">${esc(r.last_update)}<div class="muted small">${ago(r.last_update_at)}</div></div>` : '<div class="muted small mt">No updates yet.</div>'}
-      <div class="row mt"><button class="btn primary sm" data-up="${r.id}">${icon('send')} Post update</button>${isAdmin() ? `<button class="btn sm" data-edit="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button>` : ''}</div></div></div>`).join('') || '<div class="card empty">No routes yet.</div>'}</div>
+      <div class="row mt">${can('transport') ? `<button class="btn primary sm" data-up="${r.id}">${icon('send')} Post update</button>` : ''}${isAdmin() ? `<button class="btn sm" data-edit="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button>` : ''}</div></div></div>`).join('') || '<div class="card empty">No routes yet.</div>'}</div>
     <div class="card"><div class="card-h"><h3>Recent bus updates</h3></div>${updates.length ? updates.map((u) => `<div class="list-item">${catIcon('transport')}<div class="grow"><div class="t1">${esc(u.route_name)} ${u.bus_no ? `<span class="badge">${esc(u.bus_no)}</span>` : ''}</div><div class="t2">${esc(u.message)}</div></div><span class="muted small">${ago(u.created_at)}</span></div>`).join('') : '<div class="empty">No updates sent.</div>'}</div>
   </div>`;
   const quick = ['Running 10 mins late due to traffic.', 'Has departed from school.', 'Has reached school safely.', 'Is delayed due to a breakdown. A replacement bus is on the way.', 'Will not operate tomorrow.'];
@@ -565,62 +602,108 @@ PAGES.transport = async (el) => {
   $$('[data-del]', el).forEach((b) => b.onclick = async () => { if (await confirmBox('Delete this route? Students will be unassigned.', 'Delete')) DEL('/api/routes/' + b.dataset.del).then(() => PAGES.transport(el)).catch((e) => toast(e.message, 'error')); });
 };
 
-/* ---------- Users ---------- */
+/* ---------- Users & roles ---------- */
+const ROLE_GROUPS = [
+  ['', 'All'], ['management', 'Management', ['admin', 'director', 'principal', 'vice_principal']],
+  ['teaching', 'Teachers', ['section_head', 'class_teacher', 'subject_teacher']],
+  ['office', 'Office', ['accountant', 'admissions', 'front_office', 'librarian']],
+  ['parent', 'Parents', ['parent']], ['student', 'Students', ['student']],
+];
 PAGES.users = async (el) => {
-  el.innerHTML = `<div class="card"><div class="card-h"><div class="tabs" id="ut">${[['', 'All'], ['admin', 'Admins'], ['teacher', 'Teachers'], ['parent', 'Parents'], ['student', 'Students']].map(([v, l], i) => `<button data-v="${v}" class="${i === 0 ? 'active' : ''}">${l}</button>`).join('')}</div><span class="spacer"></span><button class="btn primary" id="add">${icon('plus')} Add user</button></div><div id="ul">${loading()}</div></div>`;
-  let role = '';
-  const load = async () => {
-    const rows = await GET('/api/users?role=' + role);
+  el.innerHTML = `<div class="card"><div class="card-h"><div class="tabs" id="ut">${ROLE_GROUPS.map(([v, l], i) => `<button data-v="${v}" class="${i === 0 ? 'active' : ''}">${l}</button>`).join('')}</div>
+    <input class="input" id="uq" placeholder="Search…" style="max-width:220px"><span class="spacer"></span><button class="btn primary" id="add">${icon('plus')} Add user</button></div><div id="ul">${loading()}</div></div>`;
+  let group = '', all = [];
+  const render = () => {
+    const g = ROLE_GROUPS.find((x) => x[0] === group);
+    const q = $('#uq', el).value.toLowerCase();
+    const rows = all.filter((r) => (!g || !g[2] || g[2].includes(r.role)) && (!q || (r.name + r.email + (r.phone || '')).toLowerCase().includes(q)));
     $('#ul', el).innerHTML = table([
       { label: 'Name', render: (r) => `<div class="row" style="flex-wrap:nowrap"><div class="avatar">${esc(initials(r.name))}</div><div><b>${esc(r.name)}</b><div class="muted small">${esc(r.email)}</div></div></div>` },
-      { label: 'Role', render: (r) => badge('', cap(r.role)) }, { label: 'Mobile', key: 'phone' }, { label: 'WhatsApp', key: 'whatsapp' },
-      { label: 'Children', render: (r) => esc(r.children || '') }, { label: 'Language', key: 'language' },
+      { label: 'Role', render: (r) => badge(['admin', 'director', 'principal', 'vice_principal'].includes(r.role) ? 'leave' : '', r.role_label) },
+      { label: 'Mobile', key: 'phone' }, { label: 'Children', render: (r) => esc(r.children || '') },
       { label: 'Status', render: (r) => r.active ? badge('present', 'Active') : badge('absent', 'Disabled') },
       { label: '', render: (r) => `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end"><button class="btn sm" data-edit="${r.id}">${icon('edit')}</button>${r.id !== S.me.id ? `<button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button>` : ''}</div>` },
-    ], rows);
-    $$('[data-edit]', el).forEach((b) => b.onclick = () => edit(rows.find((r) => r.id == b.dataset.edit)));
+    ], rows, 'No users found.');
+    $$('[data-edit]', el).forEach((b) => b.onclick = () => edit(all.find((r) => r.id == b.dataset.edit)));
     $$('[data-del]', el).forEach((b) => b.onclick = async () => { if (await confirmBox('Delete this user permanently?', 'Delete')) DEL('/api/users/' + b.dataset.del).then(load).catch((e) => toast(e.message, 'error')); });
   };
+  const load = async () => { all = await GET('/api/users'); render(); };
+  const roleOpts = () => S.roles.filter((r) => r.id !== 'admin' || S.me.role === 'admin').map((r) => [r.id, r.label]);
   const edit = (u = {}) => modal({
     title: u.id ? 'Edit user' : 'Add user',
     body: formFields([
       { name: 'name', label: 'Full name', required: true }, { name: 'email', label: 'Login email', type: 'email', required: true },
-      { name: 'role', label: 'Role', type: 'select', options: [['parent', 'Parent'], ['teacher', 'Teacher'], ['admin', 'Administrator'], ['student', 'Student']], value: u.role || role || 'parent' },
+      { name: 'role', label: 'Role', type: 'select', options: roleOpts(), value: u.role || 'class_teacher' },
       { name: 'language', label: 'Language', type: 'select', options: ['English', 'Sinhala', 'Tamil'] },
       { name: 'phone', label: 'Mobile', placeholder: '07X XXX XXXX' }, { name: 'whatsapp', label: 'WhatsApp', placeholder: 'Same as mobile if empty' },
       { name: 'password', label: u.id ? 'New password (leave blank to keep)' : 'Password', type: 'text', required: !u.id },
       ...(u.id ? [{ name: 'active', label: 'Account active', type: 'checkbox', value: !!u.active }] : []),
-    ], u),
+    ], u) + `<div class="muted small" id="roleHelp"></div>`,
+    onOpen: (f) => { const help = () => { $('#roleHelp', f).textContent = ROLE_HELP[f.elements.role.value] || ''; }; f.elements.role.onchange = help; help(); },
     onSubmit: async (v) => { u.id ? await PUT('/api/users/' + u.id, v) : await POST('/api/users', v); toast('User saved', 'success'); load(); },
   });
-  $$('#ut button', el).forEach((b) => b.onclick = () => { role = b.dataset.v; $$('#ut button', el).forEach((x) => x.classList.toggle('active', x === b)); load(); });
+  $$('#ut button', el).forEach((b) => b.onclick = () => { group = b.dataset.v; $$('#ut button', el).forEach((x) => x.classList.toggle('active', x === b)); render(); });
+  $('#uq', el).oninput = render;
   $('#add', el).onclick = () => edit();
   await load();
 };
+const ROLE_HELP = {
+  admin: 'Full access including system settings, integrations and the database.',
+  director: 'Read-only overview: dashboard, fees, reports and staff. Can approve leave and send school-wide messages.',
+  principal: 'Everything except system settings: staff, timetables, leave approval, academics, fees and messaging.',
+  vice_principal: 'Like the principal, but cannot manage user accounts or edit fees.',
+  section_head: 'Runs a section: its classes, attendance, academics, teacher attendance, leave approval and relief cover.',
+  class_teacher: 'Marks attendance for their own class; homework, exams and messages for the classes they teach.',
+  subject_teacher: 'Homework, exams and messages for the classes they teach. Sees their timetable and relief duties.',
+  accountant: 'Fees: issue, record payments, reminders and reports.',
+  admissions: 'Enquiries, admission tests, offers and enrolment of new students.',
+  front_office: 'Adds students and parents, sends circulars, bus updates and teacher sign-in register.',
+  librarian: 'Library books, loans, returns and overdue reminders.',
+  parent: 'Parent app for their own children.', student: 'Student app.',
+};
 
-/* ---------- Classes ---------- */
+/* ---------- Sections & classes ---------- */
 PAGES.classes = async (el) => {
-  const [rows, teachers] = await Promise.all([loadClasses(true), GET('/api/users?role=teacher')]);
-  el.innerHTML = `<div class="card"><div class="card-h"><h3>Classes</h3><span class="spacer"></span><button class="btn primary" id="add">${icon('plus')} Add class</button></div>${table([
-    { label: 'Class', render: (r) => `<b>${esc(r.label)}</b>` }, { label: 'Class teacher', render: (r) => esc(r.teacher_name || '—') },
-    { label: 'Students', key: 'student_count', num: true },
-    { label: '', render: (r) => `<div class="row" style="justify-content:flex-end"><button class="btn sm" data-edit="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button></div>` },
-  ], rows, 'No classes yet.')}</div>`;
-  const edit = (c = {}) => modal({
+  const [rows, sections, teachers] = await Promise.all([loadClasses(true), GET('/api/sections'), GET('/api/staff?teaching=1')]);
+  const heads = await GET('/api/staff');
+  el.innerHTML = `<div class="stack">
+    <div class="card"><div class="card-h"><h3>Sections</h3><span class="muted small">e.g. Primary, Middle, Upper, A/L — each with a Head of Section</span><span class="spacer"></span><button class="btn" id="addS">${icon('plus')} Add section</button></div>${table([
+      { label: 'Section', render: (r) => `<b>${esc(r.name)}</b>` }, { label: 'Head of section', render: (r) => esc(r.head_name || '—') },
+      { label: 'Classes', key: 'class_count', num: true }, { label: 'Students', key: 'student_count', num: true },
+      { label: '', render: (r) => `<div class="row" style="justify-content:flex-end"><button class="btn sm" data-es="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-ds="${r.id}">${icon('trash')}</button></div>` },
+    ], sections, 'No sections yet.')}</div>
+    <div class="card"><div class="card-h"><h3>Classes</h3><span class="muted small">Assign each class to a section and a class teacher</span><span class="spacer"></span><button class="btn primary" id="add">${icon('plus')} Add class</button></div>${table([
+      { label: 'Class', render: (r) => `<b>${esc(r.label)}</b>` }, { label: 'Section', render: (r) => esc(r.section_name || '—') },
+      { label: 'Class teacher', render: (r) => esc(r.teacher_name || '—') }, { label: 'Students', key: 'student_count', num: true },
+      { label: 'Subjects', render: (r) => `${r.subject_count} <span class="muted small">(${r.periods} periods/wk)</span>` },
+      { label: '', render: (r) => `<div class="row" style="justify-content:flex-end"><a class="btn sm" href="#/timetable/alloc/${r.id}" title="Subjects & teachers">${icon('book')}</a><button class="btn sm" data-edit="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button></div>` },
+    ], rows, 'No classes yet.')}</div></div>`;
+  const editClass = (c = {}) => modal({
     title: c.id ? 'Edit class' : 'Add class',
-    body: formFields([{ name: 'name', label: 'Grade / class name', required: true, placeholder: 'Grade 6' }, { name: 'section', label: 'Section', placeholder: 'A' },
-      { name: 'teacher_id', label: 'Class teacher', type: 'select', full: true, options: [[0, '—'], ...teachers.map((t) => [t.id, t.name])] }], c),
-    onSubmit: async (v) => { const b = { ...v, teacher_id: Number(v.teacher_id) }; c.id ? await PUT('/api/classes/' + c.id, b) : await POST('/api/classes', b); toast('Class saved', 'success'); PAGES.classes(el); },
+    body: formFields([{ name: 'name', label: 'Grade / class name', required: true, placeholder: 'Grade 6' }, { name: 'section', label: 'Division', placeholder: 'A' },
+      { name: 'section_id', label: 'Section', type: 'select', options: [[0, '—'], ...sections.map((s) => [s.id, s.name])] },
+      { name: 'teacher_id', label: 'Class teacher', type: 'select', options: [[0, '—'], ...teachers.map((t) => [t.id, `${t.name} (${t.role_label})`])] }], c),
+    onSubmit: async (v) => { const b = { ...v, teacher_id: Number(v.teacher_id), section_id: Number(v.section_id) }; c.id ? await PUT('/api/classes/' + c.id, b) : await POST('/api/classes', b); toast('Class saved', 'success'); PAGES.classes(el); },
   });
-  $('#add', el).onclick = () => edit();
-  $$('[data-edit]', el).forEach((b) => b.onclick = () => edit(rows.find((r) => r.id == b.dataset.edit)));
-  $$('[data-del]', el).forEach((b) => b.onclick = async () => { if (await confirmBox('Delete this class? Its homework and exams will also be removed.', 'Delete')) DEL('/api/classes/' + b.dataset.del).then(() => PAGES.classes(el)).catch((e) => toast(e.message, 'error')); });
+  const editSection = (s = {}) => modal({
+    title: s.id ? 'Edit section' : 'Add section',
+    body: formFields([{ name: 'name', label: 'Section name', required: true, placeholder: 'Primary School' }, { name: 'sort', label: 'Display order', type: 'number', value: s.sort ?? sections.length + 1 },
+      { name: 'head_id', label: 'Head of section', type: 'select', full: true, options: [[0, '—'], ...heads.map((t) => [t.id, `${t.name} (${t.role_label})`])] }], s),
+    onSubmit: async (v) => { const b = { ...v, head_id: Number(v.head_id), sort: Number(v.sort || 0) }; s.id ? await PUT('/api/sections/' + s.id, b) : await POST('/api/sections', b); toast('Section saved', 'success'); PAGES.classes(el); },
+  });
+  $('#add', el).onclick = () => editClass();
+  $('#addS', el).onclick = () => editSection();
+  $$('[data-edit]', el).forEach((b) => b.onclick = () => editClass(rows.find((r) => r.id == b.dataset.edit)));
+  $$('[data-es]', el).forEach((b) => b.onclick = () => editSection(sections.find((r) => r.id == b.dataset.es)));
+  $$('[data-del]', el).forEach((b) => b.onclick = async () => { if (await confirmBox('Delete this class? Its homework, exams and timetable will also be removed.', 'Delete')) DEL('/api/classes/' + b.dataset.del).then(() => PAGES.classes(el)).catch((e) => toast(e.message, 'error')); });
+  $$('[data-ds]', el).forEach((b) => b.onclick = async () => { if (await confirmBox('Delete this section? Its classes are kept but no longer belong to a section.', 'Delete')) DEL('/api/sections/' + b.dataset.ds).then(() => PAGES.classes(el)).catch((e) => toast(e.message, 'error')); });
 };
 
 /* ---------- Settings ---------- */
 PAGES.settings = async (el) => {
   const s = await GET('/api/settings');
-  const cats = [['attendance', 'Attendance alerts'], ['fees', 'Fee reminders & receipts'], ['homework', 'Homework'], ['exams', 'Exam notices'], ['results', 'Results'], ['transport', 'Bus updates'], ['messages', 'New chat message']];
+  const cats = [['attendance', 'Attendance alerts'], ['fees', 'Fee reminders & receipts'], ['homework', 'Homework'], ['exams', 'Exam notices'], ['results', 'Results'], ['transport', 'Bus updates'], ['messages', 'New chat message'], ['staff', 'Staff: relief duty & leave decisions'], ['library', 'Library overdue books']];
+  const tt = s.timetable;
   el.innerHTML = `<form id="sf" class="stack">
     <div class="grid g-2">
       <div class="card"><div class="card-h"><h3>School profile</h3></div><div class="card-b">${formFields([
@@ -641,6 +724,16 @@ PAGES.settings = async (el) => {
         ${field({ name: 'fee_reminder_days', label: 'Remind about fees due within (days)', type: 'number', min: 0, value: s.fee_reminder_days })}
         ${field({ name: 'fee_reminder_hour', label: 'Daily reminder time (hour, 0–23)', type: 'number', min: 0, value: s.fee_reminder_hour })}
       </div></div>
+    <div class="card"><div class="card-h"><h3>School day & timetable</h3><span class="muted small">Used to generate timetables and relief duties</span></div><div class="card-b form-grid">
+      ${field({ name: 'school_days', label: 'School days per week', type: 'select', options: [['5', 'Monday – Friday'], ['6', 'Monday – Saturday']], value: s.school_days })}
+      ${field({ name: 'periods_per_day', label: 'Periods per day', type: 'number', min: 1, value: s.periods_per_day })}
+      ${field({ name: 'day_start', label: 'First period starts', type: 'time', value: s.day_start })}
+      ${field({ name: 'period_minutes', label: 'Period length (minutes)', type: 'number', min: 10, value: s.period_minutes })}
+      ${field({ name: 'break_after', label: 'Interval after period', type: 'number', min: 0, value: s.break_after })}
+      ${field({ name: 'break_minutes', label: 'Interval length (minutes)', type: 'number', min: 0, value: s.break_minutes })}
+      ${field({ name: 'staff_late_after', label: 'Teachers are marked late after', type: 'time', value: s.staff_late_after })}
+      <div class="field full"><label>Period times</label><div class="row small">${tt.times.map((t, i) => `<span class="badge">P${i + 1} ${t}</span>`).join('')}</div></div>
+    </div></div>
     <div><button class="btn primary">${icon('check')} Save settings</button></div>
   </form>
   <div id="dbcard" class="stack" style="margin-top:18px"></div>`;
@@ -656,7 +749,8 @@ PAGES.settings = async (el) => {
     cats.forEach(([c]) => body['channels_' + c] = (v['channels_' + c] || []).join(','));
     body.notify_present = v.notify_present ? '1' : '0';
     body.fee_reminder_days = String(v.fee_reminder_days ?? 3); body.fee_reminder_hour = String(v.fee_reminder_hour ?? 9);
-    try { await PUT('/api/settings', body); S.school.name = v.school_name; toast('Settings saved', 'success'); } catch (err) { toast(err.message, 'error'); }
+    ['school_days', 'periods_per_day', 'day_start', 'period_minutes', 'break_after', 'break_minutes', 'staff_late_after'].forEach((k) => body[k] = String(v[k] ?? ''));
+    try { await PUT('/api/settings', body); S.school.name = v.school_name; toast('Settings saved', 'success'); PAGES.settings(el); } catch (err) { toast(err.message, 'error'); }
   });
 };
 

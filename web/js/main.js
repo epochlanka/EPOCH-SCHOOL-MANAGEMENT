@@ -4,6 +4,8 @@
 function applyMe(r) {
   S.me = r.user; S.children = r.children; S.school = r.school; S.aiEnabled = r.ai_enabled;
   S.unread = r.unread_notifications; S.unreadMessages = r.unread_messages;
+  S.perms = r.perms || []; S.roles = r.roles || []; S.roleLabel = r.role_label; S.isStaff = r.staff; S.teaching = r.teaching;
+  S.pendingLeave = r.pending_leave || 0;
   document.title = `${r.school.name} · Epoch School Connect`;
 }
 
@@ -41,14 +43,15 @@ function renderLogin() {
 
 async function logout() {
   try { await POST('/api/logout'); } catch {}
-  S.me = null; S.classes = null; S.routes = null; P.data = null;
+  S.me = null; S.classes = null; S.classCache = {}; S.routes = null; P.data = null;
   history.replaceState(null, '', location.pathname);
   renderLogin();
 }
 
 function route() {
+  $$('.modal-bg').forEach((m) => m.remove()); // dialogs belong to the page being left
   if (!S.me) return renderLogin();
-  if (S.me.role === 'admin' || S.me.role === 'teacher') renderStaff();
+  if (S.isStaff) renderStaff();
   else renderPortal().catch((e) => toast(e.message, 'error'));
 }
 
@@ -58,7 +61,7 @@ async function refreshCounts() {
     const r = await GET('/api/me');
     const changed = r.unread_notifications !== S.unread || r.unread_messages !== S.unreadMessages;
     applyMe(r);
-    if (changed && (S.me.role === 'admin' || S.me.role === 'teacher')) {
+    if (changed && S.isStaff) {
       const bell = $('#bellBtn'); if (bell) bell.innerHTML = icon('bell') + (S.unread ? `<span class="dot">${S.unread}</span>` : '');
       const link = $('.nav a[href="#/messages"]'); if (link) { const p = $('.pill', link); p && p.remove(); if (S.unreadMessages) link.insertAdjacentHTML('beforeend', `<span class="pill">${S.unreadMessages}</span>`); }
     }

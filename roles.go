@@ -46,8 +46,8 @@ var roleOrder = []string{"admin", "director", "principal", "vice_principal", "se
 	"subject_teacher", "accountant", "admissions", "front_office", "librarian", "parent", "student"}
 
 var roles = map[string]roleInfo{
-	"admin":    {"System Admin", false, allPerms},
-	"director": {"Director", false, []string{PDashboard, PStudentsView, PFeesView, PReports, PStaffView, PLeaveApprove, PAnnounce, PAnnounceAll, PAdmissions, PAICompose, PAIData}},
+	"admin":          {"System Admin", false, allPerms},
+	"director":       {"Director", false, []string{PDashboard, PStudentsView, PFeesView, PReports, PStaffView, PLeaveApprove, PAnnounce, PAnnounceAll, PAdmissions, PAICompose, PAIData}},
 	"principal":      {"Principal", true, without(allPerms, PSettings)},
 	"vice_principal": {"Vice Principal", true, without(allPerms, PSettings, PUsers, PFeesEdit)},
 	"section_head": {"Head of Section", true, []string{PDashboard, PStudentsView, PAttendance, PAcademic, PAnnounce, PReports, PTransport,

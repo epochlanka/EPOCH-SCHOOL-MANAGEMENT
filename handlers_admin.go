@@ -11,7 +11,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 	t := today()
 	counts := map[string]float64{
 		"students": a.scalar(`SELECT COUNT(*) FROM students`),
-		"teachers": a.scalar(`SELECT COUNT(*) FROM users WHERE role='teacher' AND active=1`),
+		"teachers": a.scalar(`SELECT COUNT(*) FROM users WHERE role IN ` + teachingRolesSQL + ` AND active=1`),
+		"staff":    a.scalar(`SELECT COUNT(*) FROM users WHERE role IN ` + staffRolesSQL + ` AND active=1`),
 		"parents":  a.scalar(`SELECT COUNT(*) FROM users WHERE role='parent' AND active=1`),
 		"classes":  a.scalar(`SELECT COUNT(*) FROM classes`),
 		"routes":   a.scalar(`SELECT COUNT(*) FROM routes`),
@@ -60,7 +61,52 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 	upcoming, _ := a.queryMaps(`SELECT e.subject,e.title,e.exam_date,c.name||' - '||c.section AS class_name
 		FROM exams e JOIN classes c ON c.id=e.class_id WHERE e.exam_date >= ? ORDER BY e.exam_date LIMIT 5`, t)
 
+	// Teacher attendance today.
+	onLeave := a.staffOnLeave(t)
+	teachingIDs, _ := a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN ` + teachingRolesSQL)
+	staffAtt := map[string]int{"present": 0, "late": 0, "absent": 0, "on_leave": 0, "not_marked": 0}
+	marks := map[int64]string{}
+	markRows, _ := a.db.Query(`SELECT user_id, status FROM staff_attendance WHERE date=?`, t)
+	for markRows.Next() {
+		var id int64
+		var st string
+		markRows.Scan(&id, &st)
+		marks[id] = st
+	}
+	markRows.Close()
+	for _, id := range teachingIDs {
+		switch {
+		case onLeave[id] || marks[id] == "leave":
+			staffAtt["on_leave"]++
+		case marks[id] == "":
+			staffAtt["not_marked"]++
+		default:
+			staffAtt[marks[id]]++
+		}
+	}
+	staffAway, _ := a.queryMaps(`SELECT u.id, u.name, u.role, COALESCE(sa.status,'leave') AS status,
+		(SELECT leave_type FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date LIMIT 1) AS leave_type
+		FROM users u LEFT JOIN staff_attendance sa ON sa.user_id=u.id AND sa.date=?
+		WHERE u.active=1 AND u.role IN `+staffRolesSQL+` AND (sa.status IN ('absent','late','leave') OR EXISTS
+		(SELECT 1 FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date)) ORDER BY u.name`, t, t, t)
+	for _, row := range staffAway {
+		row["role_label"] = roleLabel(row["role"].(string))
+	}
+	pending, _ := a.queryMaps(`SELECT l.id, l.leave_type, l.from_date, l.to_date, l.reason, u.name, u.role,
+		CAST(julianday(l.to_date)-julianday(l.from_date)+1 AS INTEGER) AS days
+		FROM leave_requests l JOIN users u ON u.id=l.user_id WHERE l.status='pending' AND l.user_id<>? ORDER BY l.from_date LIMIT 10`, u.ID)
+	for _, row := range pending {
+		row["role_label"] = roleLabel(row["role"].(string))
+		row["type_label"] = leaveTypes[row["leave_type"].(string)]
+	}
+	subs := map[string]float64{
+		"assigned": a.scalar(`SELECT COUNT(*) FROM substitutions WHERE date=? AND status='assigned'`, t),
+		"unfilled": a.scalar(`SELECT COUNT(*) FROM substitutions WHERE date=? AND status='unfilled'`, t),
+	}
+
 	writeJSON(w, 200, map[string]any{
+		"staff_attendance": staffAtt, "staff_away": staffAway, "pending_leave": pending, "substitutions": subs,
+		"can_approve": hasPerm(u.Role, PLeaveApprove), "can_fees": hasPerm(u.Role, PFeesView),
 		"counts": counts, "attendance": att, "fees": fees, "trend": trend,
 		"channels": channels, "recent": recent, "absentees": absentees, "upcoming_exams": upcoming,
 		"sent_today": a.scalar(`SELECT COUNT(*) FROM deliveries WHERE substr(created_at,1,10)=?`, t),
@@ -75,13 +121,16 @@ func (a *App) handleListUsers(w http.ResponseWriter, r *http.Request, u *User) {
 		(SELECT group_concat(s.name, ', ') FROM students s WHERE s.parent_id=u.id) AS children
 		FROM users u WHERE (?='' OR u.role=?)`
 	args := []any{role, role}
-	if u.Role == "teacher" { // teachers may only browse staff and parents
-		q += ` AND u.role IN ('admin','teacher','parent')`
+	if !hasPerm(u.Role, PUsers) { // others may only browse staff and parents
+		q += ` AND u.role<>'student'`
 	}
-	rows, err := a.queryMaps(q+` ORDER BY u.role, u.name`, args...)
+	rows, err := a.queryMaps(q+` ORDER BY u.name`, args...)
 	if err != nil {
 		serverError(w, err)
 		return
+	}
+	for _, row := range rows {
+		row["role_label"] = roleLabel(row["role"].(string))
 	}
 	writeJSON(w, 200, rows)
 }
@@ -102,9 +151,7 @@ func (req *userReq) validate(creating bool) string {
 	if req.Name == "" || !strings.Contains(req.Email, "@") {
 		return "Name and a valid email are required"
 	}
-	switch req.Role {
-	case "admin", "teacher", "parent", "student":
-	default:
+	if !validRole(req.Role) {
 		return "Invalid role"
 	}
 	if creating && len(req.Password) < 6 {
@@ -130,6 +177,10 @@ func (a *App) handleCreateUser(w http.ResponseWriter, r *http.Request, u *User) 
 	}
 	if msg := req.validate(true); msg != "" {
 		errJSON(w, 400, msg)
+		return
+	}
+	if req.Role == "admin" && u.Role != "admin" {
+		errJSON(w, 403, "Only a System Admin can create admin accounts")
 		return
 	}
 	hash, err := hashPassword(req.Password)
@@ -160,6 +211,12 @@ func (a *App) handleUpdateUser(w http.ResponseWriter, r *http.Request, u *User) 
 	}
 	if msg := req.validate(false); msg != "" {
 		errJSON(w, 400, msg)
+		return
+	}
+	var currentRole string
+	a.db.QueryRow(`SELECT role FROM users WHERE id=?`, id).Scan(&currentRole)
+	if (req.Role == "admin" || currentRole == "admin") && u.Role != "admin" {
+		errJSON(w, 403, "Only a System Admin can change admin accounts")
 		return
 	}
 	active := 1
@@ -211,10 +268,21 @@ func (a *App) handleDeleteUser(w http.ResponseWriter, r *http.Request, u *User) 
 // ---------- Classes ----------
 
 func (a *App) handleListClasses(w http.ResponseWriter, r *http.Request, u *User) {
-	rows, err := a.queryMaps(`SELECT c.id,c.name,c.section,c.teacher_id,t.name AS teacher_name,
-		c.name||' - '||c.section AS label,
-		(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS student_count
-		FROM classes c LEFT JOIN users t ON t.id=c.teacher_id ORDER BY c.name, c.section`)
+	// ?scope=attendance|academic limits the list to classes the user may work with.
+	where, args := "", []any{}
+	switch r.URL.Query().Get("scope") {
+	case "attendance":
+		where, args = a.scopeSQL(u, PAttendance, "c.id")
+	case "academic":
+		where, args = a.scopeSQL(u, PAcademic, "c.id")
+	}
+	rows, err := a.queryMaps(`SELECT c.id,c.name,c.section,c.teacher_id,c.section_id,t.name AS teacher_name,
+		c.name||' - '||c.section AS label, sec.name AS section_name,
+		(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS student_count,
+		(SELECT COUNT(*) FROM class_subjects cs WHERE cs.class_id=c.id) AS subject_count,
+		(SELECT COALESCE(SUM(periods_per_week),0) FROM class_subjects cs WHERE cs.class_id=c.id) AS periods
+		FROM classes c LEFT JOIN users t ON t.id=c.teacher_id LEFT JOIN sections sec ON sec.id=c.section_id
+		WHERE 1=1`+where+` ORDER BY sec.sort, c.name, c.section`, args...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -227,6 +295,7 @@ func (a *App) handleSaveClass(w http.ResponseWriter, r *http.Request, u *User) {
 		Name      string `json:"name"`
 		Section   string `json:"section"`
 		TeacherID int64  `json:"teacher_id"`
+		SectionID int64  `json:"section_id"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		errJSON(w, 400, err.Error())
@@ -236,11 +305,19 @@ func (a *App) handleSaveClass(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 400, "Class name is required")
 		return
 	}
+	if req.TeacherID > 0 {
+		var role string
+		a.db.QueryRow(`SELECT role FROM users WHERE id=?`, req.TeacherID).Scan(&role)
+		if !isTeaching(role) {
+			errJSON(w, 400, "The class teacher must be a teaching staff member")
+			return
+		}
+	}
 	var err error
 	if id := pathID(r, "id"); id > 0 {
-		_, err = a.db.Exec(`UPDATE classes SET name=?,section=?,teacher_id=? WHERE id=?`, req.Name, req.Section, nullID(req.TeacherID), id)
+		_, err = a.db.Exec(`UPDATE classes SET name=?,section=?,teacher_id=?,section_id=? WHERE id=?`, req.Name, req.Section, nullID(req.TeacherID), nullID(req.SectionID), id)
 	} else {
-		_, err = a.db.Exec(`INSERT INTO classes(name,section,teacher_id) VALUES(?,?,?)`, req.Name, req.Section, nullID(req.TeacherID))
+		_, err = a.db.Exec(`INSERT INTO classes(name,section,teacher_id,section_id) VALUES(?,?,?,?)`, req.Name, req.Section, nullID(req.TeacherID), nullID(req.SectionID))
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -316,13 +393,14 @@ func (a *App) handleDeleteRoute(w http.ResponseWriter, r *http.Request, u *User)
 func (a *App) handleListStudents(w http.ResponseWriter, r *http.Request, u *User) {
 	classID := queryInt(r, "class_id")
 	q := "%" + strings.TrimSpace(r.URL.Query().Get("q")) + "%"
+	scope, scopeArgs := a.scopeSQL(u, PStudentsView, "s.class_id")
 	rows, err := a.queryMaps(`SELECT s.id,s.admission_no,s.name,s.gender,s.dob,s.class_id,s.parent_id,s.route_id,s.user_id,
 		c.name||' - '||c.section AS class_name, p.name AS parent_name, p.phone AS parent_phone, rt.name AS route_name,
 		(SELECT COALESCE(SUM(amount),0) FROM fees f WHERE f.student_id=s.id AND f.status='unpaid') AS fee_due,
 		(SELECT ROUND(100.0*SUM(status!='absent')/COUNT(*),1) FROM attendance a WHERE a.student_id=s.id) AS attendance_pct
 		FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users p ON p.id=s.parent_id LEFT JOIN routes rt ON rt.id=s.route_id
-		WHERE (?=0 OR s.class_id=?) AND (s.name LIKE ? OR s.admission_no LIKE ? OR COALESCE(p.name,'') LIKE ?)
-		ORDER BY c.name, c.section, s.name`, classID, classID, q, q, q)
+		WHERE (?=0 OR s.class_id=?) AND (s.name LIKE ? OR s.admission_no LIKE ? OR COALESCE(p.name,'') LIKE ?)`+scope+`
+		ORDER BY c.name, c.section, s.name`, append([]any{classID, classID, q, q, q}, scopeArgs...)...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -413,7 +491,7 @@ var publicSettings = []string{"school_name", "school_phone", "school_email", "sc
 
 func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request, u *User) {
 	out := map[string]any{}
-	if u.Role == "admin" {
+	if hasPerm(u.Role, PSettings) {
 		rows, err := a.queryMaps(`SELECT key,value FROM settings`)
 		if err != nil {
 			serverError(w, err)
@@ -422,6 +500,7 @@ func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request, u *User)
 		for _, row := range rows {
 			out[row["key"].(string)] = row["value"]
 		}
+		out["timetable"] = a.timetableConfig()
 		out["providers"] = map[string]any{
 			"sms": a.notify.sms.Name(), "whatsapp": a.notify.wa.Name(), "ai": a.ai.statusText(), "ai_model": a.cfg.AIModel,
 		}

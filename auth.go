@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -46,23 +45,30 @@ type loginLimiter struct {
 
 func newLoginLimiter() *loginLimiter { return &loginLimiter{hits: map[string][]time.Time{}} }
 
-// allow permits 10 login attempts per IP per 15 minutes.
-func (l *loginLimiter) allow(ip string) bool {
+// blocked reports whether a key (IP+email) has 10 or more failed logins in the last 15 minutes.
+// Only failures count, so many people signing in from one school network are not locked out.
+func (l *loginLimiter) blocked(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cutoff := time.Now().Add(-15 * time.Minute)
-	recent := l.hits[ip][:0]
-	for _, t := range l.hits[ip] {
+	recent := l.hits[key][:0]
+	for _, t := range l.hits[key] {
 		if t.After(cutoff) {
 			recent = append(recent, t)
 		}
 	}
-	if len(recent) >= 10 {
-		l.hits[ip] = recent
+	if len(recent) == 0 {
+		delete(l.hits, key)
 		return false
 	}
-	l.hits[ip] = append(recent, time.Now())
-	return true
+	l.hits[key] = recent
+	return len(recent) >= 10
+}
+
+func (l *loginLimiter) fail(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hits[key] = append(l.hits[key], time.Now())
 }
 
 func clientIP(r *http.Request) string {
@@ -82,8 +88,9 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, 400, err.Error())
 		return
 	}
-	if !a.limiter.allow(clientIP(r)) {
-		errJSON(w, 429, "Too many login attempts. Please wait 15 minutes and try again.")
+	limitKey := clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(req.Email))
+	if a.limiter.blocked(limitKey) {
+		errJSON(w, 429, "Too many failed login attempts. Please wait 15 minutes and try again.")
 		return
 	}
 	var u User
@@ -92,6 +99,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	err := a.db.QueryRow(`SELECT id,name,email,phone,whatsapp,role,language,password_hash,active FROM users WHERE email=?`,
 		strings.TrimSpace(req.Email)).Scan(&u.ID, &u.Name, &u.Email, &u.Phone, &u.WhatsApp, &u.Role, &u.Language, &hash, &active)
 	if err != nil || active == 0 || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		a.limiter.fail(limitKey)
 		errJSON(w, 401, "Invalid email or password")
 		return
 	}
@@ -133,16 +141,16 @@ func (a *App) currentUser(r *http.Request) (*User, error) {
 	return &u, nil
 }
 
-// auth wraps a handler with session authentication, role checks and a JSON
+// auth wraps a handler with session authentication, a permission check and a JSON
 // content-type requirement on state-changing requests (CSRF defence).
-func (a *App) auth(roles []string, fn handlerFunc) http.Handler {
+func (a *App) auth(perm string, fn handlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, err := a.currentUser(r)
 		if err != nil {
 			errJSON(w, 401, "Please sign in")
 			return
 		}
-		if len(roles) > 0 && !slices.Contains(roles, u.Role) {
+		if !hasPerm(u.Role, perm) {
 			errJSON(w, 403, "You do not have permission to do this")
 			return
 		}
@@ -180,6 +188,9 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request, u *User) {
 			"email": a.setting("school_email"), "address": a.setting("school_address"),
 		},
 		"ai_enabled": a.ai.enabled,
+		"role_label": roleLabel(u.Role), "perms": roles[u.Role].Perms, "staff": isStaff(u.Role), "teaching": isTeaching(u.Role),
+		"roles":         rolesForClient(),
+		"pending_leave": a.pendingLeaveCount(u),
 	})
 }
 
@@ -238,12 +249,15 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request, u *Us
 // canViewStudent reports whether u may see data for the given student.
 func (a *App) canViewStudent(u *User, studentID int64) bool {
 	switch u.Role {
-	case "admin", "teacher":
-		return true
 	case "parent":
 		return a.scalar(`SELECT COUNT(*) FROM students WHERE id=? AND parent_id=?`, studentID, u.ID) > 0
 	case "student":
 		return a.scalar(`SELECT COUNT(*) FROM students WHERE id=? AND user_id=?`, studentID, u.ID) > 0
 	}
-	return false
+	if !hasPerm(u.Role, PStudentsView) {
+		return false
+	}
+	var classID int64
+	a.db.QueryRow(`SELECT COALESCE(class_id,0) FROM students WHERE id=?`, studentID).Scan(&classID)
+	return a.inClassScope(u, PStudentsView, classID)
 }

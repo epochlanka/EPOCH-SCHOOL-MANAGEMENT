@@ -44,14 +44,16 @@ type deliveryJob struct {
 }
 
 type Notifier struct {
-	a    *App
-	jobs chan deliveryJob
-	sms  sender
-	wa   sender
+	a       *App
+	jobs    chan deliveryJob
+	sms     sender
+	wa      sender
+	startID int64 // deliveries above this id were queued by this run and are already in jobs
 }
 
 func newNotifier(a *App) *Notifier {
 	n := &Notifier{a: a, jobs: make(chan deliveryJob, 2000)}
+	a.db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM deliveries`).Scan(&n.startID)
 	hc := &http.Client{Timeout: 20 * time.Second}
 	cfg := a.cfg
 	switch cfg.SMSProvider {
@@ -92,7 +94,7 @@ func (n *Notifier) run(ctx context.Context) {
 			}
 		})
 	}
-	rows, err := n.a.db.Query(`SELECT id,channel,recipient,message FROM deliveries WHERE status='queued' ORDER BY id`)
+	rows, err := n.a.db.Query(`SELECT id,channel,recipient,message FROM deliveries WHERE status='queued' AND id<=? ORDER BY id`, n.startID)
 	if err != nil {
 		log.Printf("requeue: %v", err)
 		return

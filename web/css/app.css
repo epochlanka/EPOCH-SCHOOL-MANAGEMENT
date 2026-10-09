@@ -340,3 +340,17 @@ table.t { width: 100%; border-collapse: collapse; }
 .portal .chat { grid-template-columns: 1fr; height: auto; }
 .portal .chat-list { border-right: 0; max-height: none; }
 .portal .chat-msgs { min-height: 50vh; }
+
+/* Timetable grid */
+.tt { table-layout: fixed; min-width: 640px; }
+.tt th, .tt td { text-align: center; padding: 6px; }
+.tt .tt-p { width: 92px; text-align: left; background: var(--surface-2); }
+.tt-c { height: 54px; }
+.tt-s { --h: 220; border-radius: 8px; padding: 5px 6px; background: hsl(var(--h) 85% 95%); color: hsl(var(--h) 60% 28%); border: 1px solid hsl(var(--h) 60% 85%); font-size: 12.5px; line-height: 1.25; display: flex; flex-direction: column; text-align: left; }
+.tt-s span { font-size: 11px; opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tt-s + .tt-s { margin-top: 4px; }
+.tt .tt-today { background: color-mix(in srgb, var(--brand) 6%, transparent); }
+.tt-break td { background: var(--surface-2); color: var(--muted); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; padding: 4px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tt-s { background: hsl(var(--h) 40% 20%); color: hsl(var(--h) 80% 85%); border-color: hsl(var(--h) 40% 30%); } }
+:root[data-theme="dark"] .tt-s { background: hsl(var(--h) 40% 20%); color: hsl(var(--h) 80% 85%); border-color: hsl(var(--h) 40% 30%); }
+@media print { .sidebar, .topbar, .tabs, #gen, .card-h .btn, .card-h select { display: none !important; } .shell { display: block; } .card { box-shadow: none; border: 0; } }

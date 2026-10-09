@@ -17,6 +17,10 @@ func (a *App) handleGetAttendance(w http.ResponseWriter, r *http.Request, u *Use
 	if !validDate(date) {
 		date = today()
 	}
+	if !a.inClassScope(u, PAttendance, classID) {
+		errJSON(w, 403, "You can only mark attendance for your own class")
+		return
+	}
 	rows, err := a.queryMaps(`SELECT s.id AS student_id, s.name, s.admission_no, p.name AS parent_name,
 		COALESCE(a.status,'') AS status
 		FROM students s LEFT JOIN attendance a ON a.student_id=s.id AND a.date=?
@@ -50,6 +54,10 @@ func (a *App) handleSaveAttendance(w http.ResponseWriter, r *http.Request, u *Us
 		errJSON(w, 400, "Attendance cannot be marked for a future date")
 		return
 	}
+	if !a.inClassScope(u, PAttendance, req.ClassID) {
+		errJSON(w, 403, "You can only mark attendance for your own class")
+		return
+	}
 	type change struct {
 		studentID int64
 		status    string
@@ -63,6 +71,11 @@ func (a *App) handleSaveAttendance(w http.ResponseWriter, r *http.Request, u *Us
 	defer tx.Rollback()
 	for _, rec := range req.Records {
 		if rec.Status != "present" && rec.Status != "absent" && rec.Status != "late" {
+			continue
+		}
+		var inClass int64
+		tx.QueryRow(`SELECT COUNT(*) FROM students WHERE id=? AND class_id=?`, rec.StudentID, req.ClassID).Scan(&inClass)
+		if inClass == 0 {
 			continue
 		}
 		var prev string
@@ -128,12 +141,13 @@ func (a *App) handleAttendanceReport(w http.ResponseWriter, r *http.Request, u *
 		to = today()
 	}
 	classID := queryInt(r, "class_id")
+	scope, scopeArgs := a.scopeSQL(u, PStudentsView, "s.class_id")
 	rows, err := a.queryMaps(`SELECT s.id, s.name, s.admission_no, c.name||' - '||c.section AS class_name,
 		SUM(a.status='present') AS present, SUM(a.status='absent') AS absent, SUM(a.status='late') AS late, COUNT(a.id) AS total,
 		ROUND(100.0*SUM(a.status!='absent')/MAX(COUNT(a.id),1),1) AS percent
 		FROM students s LEFT JOIN classes c ON c.id=s.class_id
 		LEFT JOIN attendance a ON a.student_id=s.id AND a.date BETWEEN ? AND ?
-		WHERE (?=0 OR s.class_id=?) GROUP BY s.id ORDER BY percent, s.name`, from, to, classID, classID)
+		WHERE (?=0 OR s.class_id=?)`+scope+` GROUP BY s.id ORDER BY percent, s.name`, append([]any{from, to, classID, classID}, scopeArgs...)...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -316,6 +330,12 @@ func (a *App) handleDeleteFee(w http.ResponseWriter, r *http.Request, u *User) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
+func (a *App) examInScope(u *User, examID int64) bool {
+	var classID int64
+	a.db.QueryRow(`SELECT class_id FROM exams WHERE id=?`, examID).Scan(&classID)
+	return a.inClassScope(u, PAcademic, classID)
+}
+
 // classAudience returns parents and student accounts for a class.
 func (a *App) classAudience(classID int64) []int64 {
 	ids, _ := a.queryIDs(`SELECT parent_id FROM students WHERE class_id=? UNION SELECT user_id FROM students WHERE class_id=?`, classID, classID)
@@ -332,9 +352,10 @@ func (a *App) classLabel(classID int64) string {
 
 func (a *App) handleListHomework(w http.ResponseWriter, r *http.Request, u *User) {
 	classID := queryInt(r, "class_id")
+	scope, scopeArgs := a.scopeSQL(u, PAcademic, "h.class_id")
 	rows, err := a.queryMaps(`SELECT h.*, c.name||' - '||c.section AS class_name, t.name AS teacher_name
 		FROM homework h JOIN classes c ON c.id=h.class_id LEFT JOIN users t ON t.id=h.teacher_id
-		WHERE (?=0 OR h.class_id=?) ORDER BY h.due_date DESC, h.id DESC LIMIT 200`, classID, classID)
+		WHERE (?=0 OR h.class_id=?)`+scope+` ORDER BY h.due_date DESC, h.id DESC LIMIT 200`, append([]any{classID, classID}, scopeArgs...)...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -359,6 +380,10 @@ func (a *App) handleCreateHomework(w http.ResponseWriter, r *http.Request, u *Us
 		errJSON(w, 400, "Class, subject, title and due date are required")
 		return
 	}
+	if !a.inClassScope(u, PAcademic, req.ClassID) {
+		errJSON(w, 403, "You can only set homework for classes you teach")
+		return
+	}
 	if _, err := a.db.Exec(`INSERT INTO homework(class_id,subject,title,description,due_date,teacher_id,created_at) VALUES(?,?,?,?,?,?,?)`,
 		req.ClassID, req.Subject, req.Title, req.Description, req.DueDate, u.ID, now()); err != nil {
 		serverError(w, err)
@@ -376,6 +401,12 @@ func (a *App) handleCreateHomework(w http.ResponseWriter, r *http.Request, u *Us
 }
 
 func (a *App) handleDeleteHomework(w http.ResponseWriter, r *http.Request, u *User) {
+	var classID int64
+	a.db.QueryRow(`SELECT class_id FROM homework WHERE id=?`, pathID(r, "id")).Scan(&classID)
+	if !a.inClassScope(u, PAcademic, classID) {
+		errJSON(w, 403, "Not your class")
+		return
+	}
 	if _, err := a.db.Exec(`DELETE FROM homework WHERE id=?`, pathID(r, "id")); err != nil {
 		serverError(w, err)
 		return
@@ -387,11 +418,12 @@ func (a *App) handleDeleteHomework(w http.ResponseWriter, r *http.Request, u *Us
 
 func (a *App) handleListExams(w http.ResponseWriter, r *http.Request, u *User) {
 	classID := queryInt(r, "class_id")
+	scope, scopeArgs := a.scopeSQL(u, PAcademic, "e.class_id")
 	rows, err := a.queryMaps(`SELECT e.*, c.name||' - '||c.section AS class_name,
 		(SELECT COUNT(*) FROM results x WHERE x.exam_id=e.id) AS result_count,
 		(SELECT ROUND(AVG(marks),1) FROM results x WHERE x.exam_id=e.id) AS average
-		FROM exams e JOIN classes c ON c.id=e.class_id WHERE (?=0 OR e.class_id=?)
-		ORDER BY e.exam_date DESC`, classID, classID)
+		FROM exams e JOIN classes c ON c.id=e.class_id WHERE (?=0 OR e.class_id=?)`+scope+`
+		ORDER BY e.exam_date DESC`, append([]any{classID, classID}, scopeArgs...)...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -417,6 +449,10 @@ func (a *App) handleCreateExam(w http.ResponseWriter, r *http.Request, u *User) 
 		errJSON(w, 400, "Class, subject, title and exam date are required")
 		return
 	}
+	if !a.inClassScope(u, PAcademic, req.ClassID) {
+		errJSON(w, 403, "You can only schedule exams for classes you teach")
+		return
+	}
 	if req.MaxMarks <= 0 {
 		req.MaxMarks = 100
 	}
@@ -437,6 +473,10 @@ func (a *App) handleCreateExam(w http.ResponseWriter, r *http.Request, u *User) 
 }
 
 func (a *App) handleDeleteExam(w http.ResponseWriter, r *http.Request, u *User) {
+	if !a.examInScope(u, pathID(r, "id")) {
+		errJSON(w, 403, "Not your class")
+		return
+	}
 	if _, err := a.db.Exec(`DELETE FROM exams WHERE id=?`, pathID(r, "id")); err != nil {
 		serverError(w, err)
 		return
@@ -446,6 +486,10 @@ func (a *App) handleDeleteExam(w http.ResponseWriter, r *http.Request, u *User) 
 
 func (a *App) handleGetResults(w http.ResponseWriter, r *http.Request, u *User) {
 	id := pathID(r, "id")
+	if !a.examInScope(u, id) {
+		errJSON(w, 403, "Not your class")
+		return
+	}
 	exam, err := a.queryOne(`SELECT e.*, c.name||' - '||c.section AS class_name FROM exams e JOIN classes c ON c.id=e.class_id WHERE e.id=?`, id)
 	if err != nil {
 		errJSON(w, 404, "Exam not found")
@@ -473,6 +517,10 @@ func (a *App) handleSaveResults(w http.ResponseWriter, r *http.Request, u *User)
 	}
 	if err := readJSON(r, &req); err != nil {
 		errJSON(w, 400, err.Error())
+		return
+	}
+	if !a.examInScope(u, id) {
+		errJSON(w, 403, "Not your class")
 		return
 	}
 	var subject, title string

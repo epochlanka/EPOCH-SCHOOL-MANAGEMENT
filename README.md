@@ -19,7 +19,14 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 | **Reports & history** | Delivery log for every message, broken down by channel, status and category, with CSV export |
 | **Parent & student app** | Mobile-style portal: today's status, attendance, fees, diary, exams, results, bus, notices, chat |
 | **Epoch AI (Claude)** | Writes messages from a short description (English, Sinhala, Tamil or all three), translates, suggests chat replies, and answers questions using live school data. Parents only see data for their own children |
-| **Roles & security** | Admin, teacher, parent and student roles; bcrypt passwords; HttpOnly session cookies; CSRF protection; login rate limiting |
+| **Automatic timetables** | Allocate subjects, teachers and periods per week to each class, then generate a clash-free weekly timetable in one click. Subjects are spread across the week (at most two periods a day), and single periods can be edited by hand with clash checking |
+| **Teacher attendance** | Staff check in and out from "My Day" (arrivals after a set time are marked late), or the office marks the register. The dashboard shows who is present, late, absent or on leave |
+| **Leave approval** | Staff apply for leave; the principal, vice principal or head of section approves or rejects it with a note. The staff member is notified either way |
+| **Automatic relief teachers** | When a teacher is on approved leave or marked absent, each of their periods goes to a teacher who is free that period. Teachers of the same subject come first, then those with the lightest day. Relief teachers are notified, and parents see the relief teacher in the app's timetable |
+| **Sections & classes** | Group classes into sections (Primary, Middle, Upper, A/L), each with a head of section and every class with a class teacher |
+| **Admissions** | Enquiry → admission test → offer → enrolment. Enrolling creates the student and the parent login and sends a welcome message |
+| **Library** | Books and copies, issue and return, overdue lists and reminders to parents |
+| **Roles & security** | 13 roles, each with its own permissions (below). Teachers only see and act on their own classes. bcrypt passwords, HttpOnly session cookies, CSRF protection, failed-login limiting |
 
 ## Quick start
 
@@ -45,12 +52,25 @@ Go 1.27+ is required (see `go.mod`).
 
 All demo accounts use the password `epoch123`, and so does the admin unless you set `ADMIN_PASSWORD`. **Change them before going live.**
 
-| Role | Email |
-|---|---|
-| Admin | `admin@epoch.lk` |
-| Teacher | `nirmala@epoch.lk`, `kasun@epoch.lk`, `rizna@epoch.lk` |
-| Parent | `parent@epoch.lk` (child: Aarav Sharma) and others under Users |
-| Student | `student@epoch.lk` |
+| Role | Email | Can do |
+|---|---|---|
+| System Admin | `admin@epoch.lk` | Everything, including settings, integrations and the database |
+| Director | `director@epoch.lk` | View-only dashboard, fees and reports; approve leave; school-wide messages |
+| Principal | `principal@epoch.lk` | Everything except system settings |
+| Vice Principal | `viceprincipal@epoch.lk` | Like the principal, but no user accounts or fee editing |
+| Head of Section | `primaryhead@epoch.lk`, `middlehead@epoch.lk` | Their section's classes, attendance, academics, teacher attendance, leave approval, relief cover |
+| Class Teacher | `nirmala@epoch.lk`, `kasun@epoch.lk`, `rizna@epoch.lk`, `tharushi@epoch.lk` | Attendance for their own class; homework, exams and messages for classes they teach |
+| Subject Teacher | `ruwan@epoch.lk`, `nadeesha@epoch.lk`, `imran@epoch.lk`, `chamila@epoch.lk` | Homework, exams and messages for classes they teach |
+| Accountant | `accountant@epoch.lk` | Fees, payments, reminders, reports |
+| Admissions Officer | `admissions@epoch.lk` | Enquiries and enrolment |
+| Front Office | `frontoffice@epoch.lk` | Students and parents, circulars, bus updates, staff register |
+| Librarian | `librarian@epoch.lk` | Library |
+| Parent | `parent@epoch.lk` (child: Aarav Sharma) and others under Users | Parent app |
+| Student | `student@epoch.lk` | Student app |
+
+Every staff member also has **My Day** (check in/out, today's periods, relief duties, their weekly timetable and leave), **Leave Requests**, **Substitutions**, **Timetable**, **Messages** and the **AI Assistant**.
+
+Upgrading an existing database is automatic: the old "teacher" role becomes Class Teacher (if they have a class) or Subject Teacher. To get the full new demo school instead, delete the database file and restart with `SEED_DEMO=true`.
 
 For a real school, set `SEED_DEMO=false` and a strong `ADMIN_PASSWORD` **before the first run**. Then add classes, teachers, students and parents from the admin console. You can create each parent's login in the same step as adding their child.
 
@@ -116,6 +136,10 @@ handlers_academic.go attendance, fees and reminders, homework, exams and results
 handlers_comm.go     announcements, notifications, messaging, reports, portal, scheduler
 notify.go            notification engine and SMS/WhatsApp providers
 ai.go                Claude integration (compose, translate, reply, tool-using assistant)
+roles.go             roles, permissions and per-class scoping
+timetable.go         subjects, allocation, timetable generator, sections
+staff.go             teacher attendance, leave, relief-teacher assignment, My Day
+office.go            admissions and library
 web/                 embedded frontend (index.html, css/, js/, assets/)
 dev.sh               run from source for testing
 ```

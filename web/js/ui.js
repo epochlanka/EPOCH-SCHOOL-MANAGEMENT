@@ -5,7 +5,9 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const S = { me: null, school: {}, children: [], classes: null, routes: null };
+const S = { me: null, school: {}, children: [], classes: null, routes: null, perms: [], roles: [], classCache: {} };
+const can = (p) => S.perms.includes(p);
+const roleName = (r) => (S.roles.find((x) => x.id === r) || {}).label || cap(r);
 
 /* ---------- Icons (24px stroke) ---------- */
 const ICONS = {
@@ -59,12 +61,15 @@ const CAT = {
   attendance: ['calendar', 'tint-green'], fees: ['money', 'tint-red'], homework: ['book', 'tint-orange'],
   exams: ['exam', 'tint-violet'], results: ['trophy', 'tint-violet'], transport: ['bus', 'tint-teal'],
   announcement: ['megaphone', 'tint-blue'], message: ['chat', 'tint-blue'], event: ['megaphone', 'tint-orange'],
+  leave: ['calendar', 'tint-orange'], substitution: ['users', 'tint-violet'], staff: ['users', 'tint-teal'], library: ['book', 'tint-teal'],
 };
 const catIcon = (c) => { const [i, t] = CAT[c] || ['bell', 'tint-blue']; return `<div class="ic ${t}">${icon(i)}</div>`; };
 
 const STATUS_BADGE = {
   present: 'green', absent: 'red', late: 'amber', paid: 'green', unpaid: 'amber', overdue: 'red',
   sent: 'green', delivered: 'green', simulated: 'blue', queued: 'amber', failed: 'red', skipped: '',
+  leave: 'blue', pending: 'amber', approved: 'green', rejected: 'red', cancelled: '', assigned: 'green', unfilled: 'red',
+  enquiry: 'blue', test_scheduled: 'amber', offered: 'green', enrolled: 'green', withdrawn: '', returned: 'green', active: 'amber',
 };
 const badge = (s, label) => `<span class="badge ${STATUS_BADGE[s] ?? ''}">${esc(label ?? cap(s))}</span>`;
 const cap = (s) => String(s ?? '').replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
@@ -214,7 +219,12 @@ function table(cols, rows, empty = 'Nothing here yet.') {
 
 const loading = () => '<div class="empty"><div class="spinner" style="margin:auto"></div></div>';
 
-async function loadClasses(force) { if (!S.classes || force) S.classes = await GET('/api/classes'); return S.classes; }
+// loadClasses loads classes, optionally limited to the user's own (scope = 'attendance' | 'academic').
+async function loadClasses(force, scope = '') {
+  if (!S.classCache[scope] || force) S.classCache[scope] = await GET('/api/classes' + (scope ? '?scope=' + scope : ''));
+  S.classes = S.classCache[scope];
+  return S.classes;
+}
 async function loadRoutes(force) { if (!S.routes || force) S.routes = await GET('/api/routes'); return S.routes; }
 const classOptions = (all) => [...(all ? [[0, all]] : []), ...(S.classes || []).map((c) => [c.id, c.label])];
 

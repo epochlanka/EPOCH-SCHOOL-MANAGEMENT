@@ -5,7 +5,8 @@ const P = { childId: null, data: null };
 const TILES = [
   ['attendance', 'Attendance', 'calendar', 'tint-blue'], ['fees', 'Fees', 'money', 'tint-red'], ['homework', 'Homework', 'book', 'tint-orange'],
   ['exams', 'Exams', 'exam', 'tint-violet'], ['transport', 'Transport', 'bus', 'tint-orange'], ['alerts', 'Notices', 'megaphone', 'tint-green'],
-  ['messages', 'Messages', 'chat', 'tint-blue'], ['results', 'Results', 'chart', 'tint-red'], ['ai', 'Ask AI', 'sparkle', 'tint-violet'],
+  ['messages', 'Messages', 'chat', 'tint-blue'], ['results', 'Results', 'chart', 'tint-red'], ['timetable', 'Timetable', 'diary', 'tint-green'],
+  ['ai', 'Ask AI', 'sparkle', 'tint-violet'],
 ];
 
 async function renderPortal() {
@@ -89,6 +90,14 @@ PV.exams = (el, d) => {
 
 PV.results = (el, d) => {
   el.innerHTML = sectionCard('Exam results', d.results.length ? d.results.map((r) => { const pct = Math.round((r.marks * 100) / r.max_marks); return `<div class="list-item">${catIcon('results')}<div class="grow"><div class="t1">${esc(r.subject)} – ${esc(r.title)}</div><div class="t2">${fmtDate(r.exam_date)} · Class average ${r.class_average ?? '—'}</div>${r.remarks ? `<div class="small">“${esc(r.remarks)}”</div>` : ''}<div class="hbar" style="grid-template-columns:1fr 60px;margin:6px 0 0"><div class="track"><div class="fill" style="width:${pct}%;background:${pct >= 75 ? 'var(--success)' : pct >= 50 ? 'var(--orange)' : 'var(--danger)'}"></div></div><b class="num">${r.marks}/${r.max_marks}</b></div></div><span class="badge blue" style="font-size:15px">${esc(r.grade || '')}</span></div>`; }).join('') : '<div class="empty">No published results yet.</div>');
+};
+
+PV.timetable = (el, d) => {
+  const cfg = d.timetable_config;
+  const todayRows = d.timetable.filter((t) => t.day === d.today_day);
+  el.innerHTML = sectionCard('Today', d.today_day ? (todayRows.length ? todayRows.map((t) => `<div class="list-item"><div class="ic tint-blue"><b>P${t.period}</b></div><div class="grow"><div class="t1">${esc(t.subject_name)}</div><div class="t2">${esc(cfg.times[t.period - 1] || '')} · ${t.relief_teacher ? `${esc(t.relief_teacher)} <span class="badge amber">Relief teacher</span>` : esc(t.teacher_name || '')}</div></div></div>`).join('') : '<div class="empty">No timetable yet.</div>') : '<div class="empty">No school today.</div>') +
+    `<div class="card"><div class="card-h"><h3>Week</h3></div>${d.timetable.length ? ttGrid(cfg, d.timetable.map((t) => ({ ...t, class_name: t.teacher_name })), { today: d.today_day }) : '<div class="empty">No timetable yet.</div>'}</div>` +
+    (d.loans.length ? sectionCard('Library books', d.loans.map((l) => `<div class="list-item">${catIcon('library')}<div class="grow"><div class="t1">${esc(l.title)}</div><div class="t2">Return by ${fmtDate(l.due_date)}</div></div>${l.overdue ? badge('overdue') : ''}</div>`).join('')) : '');
 };
 
 PV.transport = (el, d) => {
