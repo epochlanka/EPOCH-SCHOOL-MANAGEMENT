@@ -5,7 +5,7 @@ function applyMe(r) {
   S.me = r.user; S.children = r.children; S.school = r.school; S.aiEnabled = r.ai_enabled;
   S.unread = r.unread_notifications; S.unreadMessages = r.unread_messages;
   S.perms = r.perms || []; S.roles = r.roles || []; S.roleLabel = r.role_label; S.isStaff = r.staff; S.teaching = r.teaching;
-  S.pendingLeave = r.pending_leave || 0;
+  S.pendingLeave = r.pending_leave || 0; S.pendingPickups = r.pending_pickups || 0;
   // The account's language wins, unless the user just picked one on the sign-in page.
   const mine = LANG_CODES[r.user.language] || 'en';
   if (pickedOnLogin && mine !== LANG) { pickedOnLogin = false; api('PUT', '/api/me/language', { language: LANG_NAMES[LANG] }).catch(() => {}); r.user.language = LANG_NAMES[LANG]; }

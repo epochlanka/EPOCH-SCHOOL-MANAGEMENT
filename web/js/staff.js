@@ -14,6 +14,7 @@ const NAV = [
   { id: 'attendance', label: 'Student Attendance', icon: 'calendar', perm: 'attendance' },
   { id: 'students', label: 'Students', icon: 'student', perm: 'students.view' },
   { id: 'timetable', label: 'Timetable', icon: 'diary', perm: '' },
+  { id: 'pickups', label: 'Pickup Changes', icon: 'bus', perm: 'students.view', badge: () => S.pendingPickups },
   { id: 'homework', label: 'Homework', icon: 'book', perm: 'academic' },
   { id: 'exams', label: 'Exams & Results', icon: 'exam', perm: 'academic' },
   { section: 'Staff' },
@@ -38,7 +39,7 @@ function renderStaff() {
   // Drop section headings with no visible items under them.
   const nav = allowed.filter((n, i) => !n.section || (allowed[i + 1] && !allowed[i + 1].section));
   const page = (location.hash.slice(2) || (can('dashboard') ? 'dashboard' : 'workspace')).split('/')[0];
-  const item = nav.find((n) => n.id === page) || nav.find((n) => n.id === 'workspace');
+  const item = nav.find((n) => n.id === page) || (page === 'progress' && can('students.view') ? { id: 'progress', label: 'Progress report' } : null) || nav.find((n) => n.id === 'workspace');
   $('#app').innerHTML = `<div class="shell" id="shell">
     <aside class="sidebar">
       <div class="side-brand"><img src="assets/logo-mark.png" alt=""><div><b>EPOCH</b><small>${esc(S.school.name)}</small></div></div>
@@ -422,7 +423,7 @@ PAGES.students = async (el) => {
       { label: 'Bus route', render: (r) => esc(r.route_name || '—') },
       { label: 'Attendance', num: true, render: (r) => r.attendance_pct == null ? '<span class="muted">—</span>' : `<span class="badge ${r.attendance_pct >= 90 ? 'green' : r.attendance_pct >= 80 ? 'amber' : 'red'}">${r.attendance_pct}%</span>` },
       { label: 'Fee due', num: true, render: (r) => r.fee_due ? `<b style="color:var(--danger)">${money(r.fee_due)}</b>` : '<span class="badge green">Clear</span>' },
-      { label: '', render: (r) => `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end">${r.parent_id ? `<a class="btn sm" href="#/messages/${r.parent_id}" title="Message parent">${icon('chat')}</a>` : ''}${isAdmin() ? `<button class="btn sm" data-edit="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button>` : ''}</div>` },
+      { label: '', render: (r) => `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end"><a class="btn sm" href="#/progress/${r.id}" title="Progress report">${icon('trophy')}</a>${r.parent_id ? `<a class="btn sm" href="#/messages/${r.parent_id}" title="Message parent">${icon('chat')}</a>` : ''}${isAdmin() ? `<button class="btn sm" data-edit="${r.id}">${icon('edit')}</button><button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button>` : ''}</div>` },
     ], rows, 'No students found.');
     $$('[data-edit]', el).forEach((b) => b.onclick = () => edit(rows.find((r) => r.id == b.dataset.edit)));
     $$('[data-del]', el).forEach((b) => b.onclick = async () => {

@@ -190,7 +190,7 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request, u *User) {
 		"ai_enabled": a.ai.enabled,
 		"role_label": roleLabel(u.Role), "perms": roles[u.Role].Perms, "staff": isStaff(u.Role), "teaching": isTeaching(u.Role),
 		"roles":         rolesForClient(),
-		"pending_leave": a.pendingLeaveCount(u),
+		"pending_leave": a.pendingLeaveCount(u), "pending_pickups": a.pendingPickups(u),
 	})
 }
 

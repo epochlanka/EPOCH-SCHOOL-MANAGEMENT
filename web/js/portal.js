@@ -6,6 +6,7 @@ const TILES = [
   ['attendance', 'Attendance', 'calendar', 'tint-blue'], ['fees', 'Fees', 'money', 'tint-red'], ['homework', 'Homework', 'book', 'tint-orange'],
   ['exams', 'Exams', 'exam', 'tint-violet'], ['transport', 'Transport', 'bus', 'tint-orange'], ['alerts', 'Notices', 'megaphone', 'tint-green'],
   ['messages', 'Messages', 'chat', 'tint-blue'], ['results', 'Results', 'chart', 'tint-red'], ['timetable', 'Timetable', 'diary', 'tint-green'],
+  ['progress', 'Progress', 'trophy', 'tint-orange'], ['pickup', 'Pickup', 'user', 'tint-teal'],
   ['ai', 'Ask AI', 'sparkle', 'tint-violet'],
 ];
 

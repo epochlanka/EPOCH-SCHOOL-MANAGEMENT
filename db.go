@@ -254,6 +254,31 @@ CREATE TABLE IF NOT EXISTS loans(
 	last_reminded TEXT NOT NULL DEFAULT '',
 	issued_by INTEGER
 );
+CREATE TABLE IF NOT EXISTS pickup_requests(
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+	parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+	date TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	collector_name TEXT NOT NULL DEFAULT '',
+	collector_relation TEXT NOT NULL DEFAULT '',
+	collector_phone TEXT NOT NULL DEFAULT '',
+	pickup_time TEXT NOT NULL DEFAULT '',
+	note TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'pending',
+	response TEXT NOT NULL DEFAULT '',
+	handled_by INTEGER,
+	handled_at TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS progress_summaries(
+	student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+	language TEXT NOT NULL,
+	date TEXT NOT NULL,
+	text TEXT NOT NULL,
+	PRIMARY KEY(student_id, language, date)
+);
+CREATE INDEX IF NOT EXISTS idx_pickup_date ON pickup_requests(date, status);
 CREATE INDEX IF NOT EXISTS idx_tt_teacher ON timetable(teacher_id, day, period);
 CREATE INDEX IF NOT EXISTS idx_staff_att ON staff_attendance(date);
 CREATE INDEX IF NOT EXISTS idx_subs_date ON substitutions(date);
@@ -550,6 +575,15 @@ func (a *App) seed() error {
 	for i, sid := range studentIDs[6:] {
 		exec(`INSERT INTO results(exam_id,student_id,marks,remarks) VALUES(?,?,?,?)`, e2, sid, 62+i*11, "Good effort")
 	}
+	// Earlier published tests so the progress report can show trends.
+	e3 := exec(`INSERT INTO exams(class_id,subject,title,exam_date,exam_time,max_marks,published,created_at) VALUES(?,?,?,?,?,?,1,?)`, c8, "Mathematics", "First Term Test", in(-120), "08:30", 100, now())
+	e4 := exec(`INSERT INTO exams(class_id,subject,title,exam_date,exam_time,max_marks,published,created_at) VALUES(?,?,?,?,?,?,1,?)`, c8, "English", "Second Term Test", in(-18), "08:30", 100, now())
+	e5 := exec(`INSERT INTO exams(class_id,subject,title,exam_date,exam_time,max_marks,published,created_at) VALUES(?,?,?,?,?,?,1,?)`, c8, "Science", "Second Term Test", in(-16), "08:30", 100, now())
+	for i, sid := range studentIDs[6:] {
+		exec(`INSERT INTO results(exam_id,student_id,marks,remarks) VALUES(?,?,?,?)`, e3, sid, 58+i*9, "")
+		exec(`INSERT INTO results(exam_id,student_id,marks,remarks) VALUES(?,?,?,?)`, e4, sid, 81-i*12, []string{"Excellent reading and writing", "", "Needs to practise essay writing"}[i])
+		exec(`INSERT INTO results(exam_id,student_id,marks,remarks) VALUES(?,?,?,?)`, e5, sid, 44+i*14, "")
+	}
 
 	exec(`INSERT INTO bus_updates(route_id,message,created_by,created_at) VALUES(?,?,?,?)`, r1, "Bus NC-4512 is running 10 mins late. Current location: near Matale Clock Tower.", t1, now())
 	exec(`INSERT INTO announcements(title,body,audience,channels,recipients,created_by,created_at) VALUES(?,?,?,?,?,?,?)`,
@@ -604,6 +638,10 @@ func (a *App) seed() error {
 	exec(`INSERT INTO loans(book_id,student_id,issued_at,due_date,issued_by) VALUES(?,?,?,?,?)`, b1, studentIDs[8], in(-20), in(-6), librarian)
 	exec(`INSERT INTO loans(book_id,student_id,issued_at,due_date,issued_by) VALUES(?,?,?,?,?)`, b2, studentIDs[0], in(-3), in(11), librarian)
 	_ = c5
+
+	// A pickup change waiting for the school to confirm.
+	exec(`INSERT INTO pickup_requests(student_id,parent_id,date,kind,collector_name,collector_relation,collector_phone,note,status,created_at)
+		SELECT s.id, s.parent_id, ?, 'collector', 'Kamal Sharma', 'Grandfather', '0775551234', 'He will show his NIC at the gate.', 'pending', ? FROM students s WHERE s.admission_no='EP1009'`, today(), now())
 
 	// Demo families in all three languages.
 	exec(`UPDATE users SET language='Sinhala' WHERE email IN ('sunil@example.lk','kumari@example.lk','ranjith@example.lk','shalini@example.lk')`)

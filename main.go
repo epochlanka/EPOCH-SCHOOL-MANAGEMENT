@@ -208,6 +208,13 @@ func (a *App) routes() http.Handler {
 	h("GET /api/substitutions/free-teachers", PSubstitutions, a.handleFreeTeachers)
 	h("PUT /api/substitutions/{id}", PSubstitutions, a.handleSetSubstitute)
 
+	// Pickup changes & progress reports
+	h("GET /api/pickups", anyone, a.handleListPickups)
+	h("POST /api/pickups", anyone, a.handleCreatePickup)
+	h("POST /api/pickups/{id}/respond", PStudentsView, a.handleRespondPickup)
+	h("POST /api/pickups/{id}/cancel", anyone, a.handleCancelPickup)
+	h("GET /api/progress/{id}", anyone, a.handleProgress)
+
 	// Admissions & library
 	h("GET /api/admissions", PAdmissions, a.handleListAdmissions)
 	h("POST /api/admissions", PAdmissions, a.handleSaveAdmission)

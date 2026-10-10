@@ -36,6 +36,18 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 - **Setting a parent's language:** set it when adding them (Users & Roles, or "Parent's language" when adding a student). Parents can also change it themselves in the app.
 - **Correcting translations:** screen text is in `web/js/i18n.js` and message text in `i18n.go`. Have a native speaker review both before launch. Untranslated text falls back to English.
 
+## Pickup changes & progress reports
+
+- **Pickup changes:** in the app, parents tell the school when someone else is collecting their child (with that person's name, relationship and phone), when the child isn't taking the bus, or when they'll collect early. The class teacher, head of section, front office and principal are notified at once. Staff see the day's list on **Pickup Changes** (with a badge for ones waiting), confirm or decline, and the parent gets the reply by app and WhatsApp in their own language.
+- **Progress reports:** each child gets a plain-language report covering:
+  - attendance for the last 30 days compared with the 30 before
+  - each subject against the class average and the child's previous result
+  - strengths and subjects needing support
+  - teacher remarks and upcoming homework
+  - 2–3 next steps the family can take at home
+
+  Parents open it from **Progress** in the app; staff open it from the trophy button on the Students page. The report is in the reader's language. With Epoch AI enabled, **Write with Epoch AI** produces a warmer written summary, saved once per child, language and day to keep costs down.
+
 ## Quick start
 
 ### Testing (no build)
