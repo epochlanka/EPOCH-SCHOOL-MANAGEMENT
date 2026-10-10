@@ -82,21 +82,27 @@ const addDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); d.set
 function fmtDate(s) {
   if (!s) return '';
   const d = new Date(String(s).slice(0, 10) + 'T00:00:00');
-  return isNaN(d) ? s : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return isNaN(d) ? s : localDate(d);
 }
 function ago(s) {
   if (!s) return '';
   const d = new Date(String(s).replace(' ', 'T'));
   const m = Math.round((Date.now() - d) / 60000);
   if (isNaN(m)) return s;
-  if (m < 1) return 'now';
-  if (m < 60) return m + 'm ago';
-  if (m < 1440) return Math.round(m / 60) + 'h ago';
-  if (m < 10080) return Math.round(m / 1440) + 'd ago';
+  const REL = {
+    si: { now: 'දැන්', minute: 'මිනිත්තු {n}කට පෙර', hour: 'පැය {n}කට පෙර', day: 'දින {n}කට පෙර' },
+    ta: { now: 'இப்போது', minute: '{n} நிமிடங்களுக்கு முன்', hour: '{n} மணி நேரத்துக்கு முன்', day: '{n} நாட்களுக்கு முன்' },
+  };
+  const rel = (n, unit) => REL[LANG] ? (n === 0 ? REL[LANG].now : REL[LANG][unit].replace('{n}', n))
+    : new Intl.RelativeTimeFormat('en', { numeric: 'auto', style: 'short' }).format(-n, unit);
+  if (m < 1) return rel(0, 'minute');
+  if (m < 60) return rel(m, 'minute');
+  if (m < 1440) return rel(Math.round(m / 60), 'hour');
+  if (m < 10080) return rel(Math.round(m / 1440), 'day');
   return fmtDate(s);
 }
 const initials = (n) => String(n || '?').split(/\s+/).map((p) => p[0]).slice(0, 2).join('').toUpperCase();
-function greeting() { const h = new Date().getHours(); return h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening'; }
+function greeting() { const h = new Date().getHours(); return t(h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening'); }
 
 /* Tiny, safe Markdown renderer for AI answers (escapes first). */
 function md(src) {
@@ -194,7 +200,7 @@ function field(f, v) {
   } else {
     input = `<input class="input" type="${f.type || 'text'}" name="${f.name}" value="${esc(val)}" ${req} placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} ${f.min !== undefined ? `min="${f.min}"` : ''} autocomplete="${f.autocomplete || 'off'}">`;
   }
-  return `<div class="${cls}"><label>${esc(f.label)}${f.required ? ' *' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
+  return `<div class="${cls}"><label>${esc(f.label)}${f.required ? '<span aria-hidden="true"> *</span>' : ''}</label>${input}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</div>`;
 }
 const formFields = (fields, values = {}) => `<div class="form-grid">${fields.map((f) => field(f, values[f.name])).join('')}</div>`;
 
@@ -254,7 +260,7 @@ function aiChat(container, suggestions) {
     </form>
   </div>`;
   const msgs = $('#aiMsgs', container), form = $('#aiForm', container), ta = $('textarea', form);
-  const add = (role, html) => { const d = document.createElement('div'); d.className = 'ai-msg ' + role; d.innerHTML = (role === 'user' ? `<div class="avatar">${esc(initials(S.me.name))}</div>` : `<div class="ai-bot">${icon('sparkle')}</div>`) + `<div class="body">${html}</div>`; msgs.append(d); msgs.scrollTop = msgs.scrollHeight; return d; };
+  const add = (role, html) => { const d = document.createElement('div'); d.className = 'ai-msg ' + role; d.innerHTML = (role === 'user' ? `<div class="avatar">${esc(initials(S.me.name))}</div>` : `<div class="ai-bot">${icon('sparkle')}</div>`) + `<div class="body" data-noi18n>${html}</div>`; msgs.append(d); msgs.scrollTop = msgs.scrollHeight; return d; };
   async function ask(q) {
     add('user', `<p>${esc(q)}</p>`);
     const wait = add('bot', '<div class="typing"><span></span><span></span><span></span></div>');
@@ -301,7 +307,7 @@ async function messenger(container, openId) {
     pane.innerHTML = loading();
     const t = await GET('/api/messages/thread/' + id);
     pane.innerHTML = `<div class="card-h"><div class="avatar">${esc(initials(t.contact.name))}</div><div><b>${esc(t.contact.name)}</b><div class="muted small">${esc(cap(t.contact.role))}${t.contact.phone ? ' · ' + esc(t.contact.phone) : ''}</div></div></div>
-      <div class="chat-msgs" id="msgs">${t.messages.map((m) => `<div class="bubble ${m.sender_id == S.me.id ? 'me' : ''}">${esc(m.body)}<small>${ago(m.created_at)}</small></div>`).join('') || '<div class="empty">Say hello 👋</div>'}</div>
+      <div class="chat-msgs" id="msgs">${t.messages.map((m) => `<div class="bubble ${m.sender_id == S.me.id ? 'me' : ''}"><span data-noi18n>${esc(m.body)}</span><small>${ago(m.created_at)}</small></div>`).join('') || '<div class="empty">Say hello 👋</div>'}</div>
       <form class="chat-input" id="sendForm">
         <textarea class="input" name="body" rows="1" placeholder="Type a message…" required></textarea>
         ${S.aiEnabled ? `<button type="button" class="btn ai" id="aiReply" title="Suggest a reply with AI">${icon('sparkle')}</button>` : ''}

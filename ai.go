@@ -215,13 +215,18 @@ func (a *App) handleAITranslate(w http.ResponseWriter, r *http.Request, u *User)
 		errJSON(w, 400, "Language must be English, Sinhala or Tamil")
 		return
 	}
-	system := "You translate school communications for Sri Lankan families. Return only the translation in the target language's native script, preserving names, numbers, dates and formatting. Do not add commentary."
-	text, err := a.ai.complete(r.Context(), system, "Translate into "+req.Language+":\n\n"+req.Text, "low", nil)
+	text, err := a.ai.translate(r.Context(), req.Text, req.Language)
 	if err != nil {
 		aiFail(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]string{"text": text})
+}
+
+// translate renders school text in English, Sinhala or Tamil.
+func (ai *AI) translate(ctx context.Context, text, lang string) (string, error) {
+	system := "You translate school communications for Sri Lankan families. Return only the translation in the target language's native script, preserving names, numbers, dates and formatting. Do not add commentary."
+	return ai.complete(ctx, system, "Translate into "+lang+":\n\n"+text, "low", nil)
 }
 
 // ---------- Reply suggestion ----------

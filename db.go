@@ -605,6 +605,10 @@ func (a *App) seed() error {
 	exec(`INSERT INTO loans(book_id,student_id,issued_at,due_date,issued_by) VALUES(?,?,?,?,?)`, b2, studentIDs[0], in(-3), in(11), librarian)
 	_ = c5
 
+	// Demo families in all three languages.
+	exec(`UPDATE users SET language='Sinhala' WHERE email IN ('sunil@example.lk','kumari@example.lk','ranjith@example.lk','shalini@example.lk')`)
+	exec(`UPDATE users SET language='Tamil' WHERE email IN ('rifkhan@example.lk','chamari@example.lk')`)
+
 	log.Printf("Seeded demo school data (admin login: %s)", a.cfg.AdminEmail)
 	if err := tx.Commit(); err != nil {
 		return err

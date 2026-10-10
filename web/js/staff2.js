@@ -44,7 +44,7 @@ function ttGrid(cfg, entries, { cell, today } = {}) {
       html += `<td class="tt-c ${today === d ? 'tt-today' : ''}" data-day="${d}" data-period="${p}">${cell ? cell(list, d, p) : list.map((e) => `<div class="tt-s" style="--h:${hue(e.subject_name)}"><b>${esc(e.subject_name)}</b><span>${esc(e.class_name || e.teacher_name || '')}</span></div>`).join('')}</td>`;
     }
     html += '</tr>';
-    if (p === cfg.break_after && p < cfg.periods) html += `<tr class="tt-break"><td colspan="${cfg.days + 1}">Interval · ${cfg.break_minutes} min</td></tr>`;
+    if (p === cfg.break_after && p < cfg.periods) html += `<tr class="tt-break"><td colspan="${cfg.days + 1}">${t('Interval')} · ${cfg.break_minutes} ${t('min')}</td></tr>`;
   }
   return html + '</tbody></table></div>';
 }

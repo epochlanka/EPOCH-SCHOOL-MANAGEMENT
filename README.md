@@ -28,6 +28,14 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 | **Library** | Books and copies, issue and return, overdue lists and reminders to parents |
 | **Roles & security** | 13 roles, each with its own permissions (below). Teachers only see and act on their own classes. bcrypt passwords, HttpOnly session cookies, CSRF protection, failed-login limiting |
 
+## Languages: English, සිංහල, தமிழ்
+
+- **Screens:** every screen can be switched between English, Sinhala and Tamil, from the sign-in page, the staff top bar, or Profile in the parent app. The choice is saved to the person's account, so it follows them to any device.
+- **Messages:** each person's language also decides how their WhatsApp, SMS and app messages arrive. Attendance, fee, homework, exam, result, bus, leave, relief-duty, welcome and library messages are all sent in each person's own language automatically.
+- **Announcements:** when Epoch AI is enabled, tick **Translate for each recipient** and every parent gets the announcement in their own language.
+- **Setting a parent's language:** set it when adding them (Users & Roles, or "Parent's language" when adding a student). Parents can also change it themselves in the app.
+- **Correcting translations:** screen text is in `web/js/i18n.js` and message text in `i18n.go`. Have a native speaker review both before launch. Untranslated text falls back to English.
+
 ## Quick start
 
 ### Testing (no build)

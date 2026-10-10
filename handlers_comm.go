@@ -44,11 +44,13 @@ func (a *App) handleCreateBusUpdate(w http.ResponseWriter, r *http.Request, u *U
 	}
 	a.db.Exec(`INSERT INTO bus_updates(route_id,message,created_by,created_at) VALUES(?,?,?,?)`, routeID, req.Message, u.ID, now())
 	parents, _ := a.queryIDs(`SELECT parent_id FROM students WHERE route_id=? UNION SELECT user_id FROM students WHERE route_id=?`, routeID, routeID)
-	title := "Bus Update"
-	if busNo != "" {
-		title += " – Bus " + busNo
-	}
-	n, err := a.notify.Notify("transport", title, fmt.Sprintf("%s: %s", name, req.Message), parents, a.notify.channelsFor("transport"))
+	n, err := a.notify.NotifyEach("transport", parents, a.notify.channelsFor("transport"), func(lang string) (string, string) {
+		title := L(lang, "bus.title")
+		if busNo != "" {
+			title = L(lang, "bus.titlebus", busNo)
+		}
+		return title, fmt.Sprintf("%s: %s", name, req.Message)
+	})
 	if err != nil {
 		serverError(w, err)
 		return
@@ -108,6 +110,8 @@ func (a *App) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request, u
 		AudienceID int64    `json:"audience_id"`
 		Channels   []string `json:"channels"`
 		Category   string   `json:"category"`
+		Translate  bool     `json:"translate"` // AI-translate into each recipient's language
+		Language   string   `json:"language"`  // language the message is written in
 	}
 	if err := readJSON(r, &req); err != nil {
 		errJSON(w, 400, err.Error())
@@ -134,14 +138,44 @@ func (a *App) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request, u
 	if req.Category == "" {
 		req.Category = "announcement"
 	}
-	n, err := a.notify.Notify(req.Category, req.Title, req.Body, ids, strings.Split(channels, ","))
+	if !validLanguage(req.Language) {
+		req.Language = "English"
+	}
+	// With translation on, each language group gets an AI translation; if a
+	// translation fails that group receives the original text.
+	type version struct{ title, body string }
+	versions := map[string]version{req.Language: {req.Title, req.Body}}
+	failed := 0
+	n, err := a.notify.NotifyEach(req.Category, ids, strings.Split(channels, ","), func(lang string) (string, string) {
+		if v, ok := versions[lang]; ok {
+			return v.title, v.body
+		}
+		v := version{req.Title, req.Body}
+		if req.Translate && a.ai.enabled {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+			title, err1 := a.ai.translate(ctx, req.Title, lang)
+			body, err2 := a.ai.translate(ctx, req.Body, lang)
+			cancel()
+			if err1 == nil && err2 == nil && title != "" && body != "" {
+				v = version{title, body}
+			} else {
+				failed++
+			}
+		}
+		versions[lang] = v
+		return v.title, v.body
+	})
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	a.db.Exec(`INSERT INTO announcements(title,body,audience,audience_id,channels,recipients,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		req.Title, req.Body, req.Audience, nullID(req.AudienceID), channels, n, u.ID, now())
-	writeJSON(w, 201, map[string]any{"ok": true, "recipients": n})
+	langs := []string{}
+	for l := range versions {
+		langs = append(langs, l)
+	}
+	writeJSON(w, 201, map[string]any{"ok": true, "recipients": n, "languages": langs, "translation_failed": failed})
 }
 
 // ---------- In-app notifications ----------
@@ -275,7 +309,9 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request, u *User)
 	if len([]rune(preview)) > 140 {
 		preview = string([]rune(preview)[:140]) + "…"
 	}
-	a.notify.Notify("message", "New message from "+u.Name, preview, []int64{req.To}, a.notify.channelsFor("messages"))
+	a.notify.NotifyEach("message", []int64{req.To}, a.notify.channelsFor("messages"), func(lang string) (string, string) {
+		return L(lang, "message.title", u.Name), preview
+	})
 	writeJSON(w, 201, map[string]any{"id": id})
 }
 

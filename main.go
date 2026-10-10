@@ -150,6 +150,7 @@ func (a *App) routes() http.Handler {
 	h("GET /api/me", anyone, a.handleMe)
 	h("PUT /api/me", anyone, a.handleUpdateMe)
 	h("POST /api/me/password", anyone, a.handleChangePassword)
+	h("PUT /api/me/language", anyone, a.handleSetLanguage)
 
 	// Dashboard & administration
 	h("GET /api/dashboard", PDashboard, a.handleDashboard)

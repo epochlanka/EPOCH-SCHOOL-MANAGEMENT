@@ -214,12 +214,10 @@ func (a *App) handleApplyLeave(w http.ResponseWriter, r *http.Request, u *User) 
 	approvers, _ := a.queryIDs(`SELECT id FROM users WHERE active=1 AND id<>? AND role IN ('admin','principal','vice_principal')
 		UNION SELECT s.head_id FROM sections s JOIN classes c ON c.section_id=s.id
 		WHERE c.teacher_id=? OR c.id IN (SELECT class_id FROM class_subjects WHERE teacher_id=?)`, u.ID, u.ID, u.ID)
-	when := prettyDate(req.From)
-	if req.To != req.From {
-		when += " – " + prettyDate(req.To)
-	}
-	a.notify.Notify("leave", "Leave request: "+u.Name, fmt.Sprintf("%s requested %s for %s. %s", u.Name, strings.ToLower(leaveTypes[req.Type]), when, req.Reason),
-		approvers, []string{"app"})
+	a.notify.NotifyEach("leave", approvers, []string{"app"}, func(lang string) (string, string) {
+		return L(lang, "leavereq.title", u.Name),
+			strings.TrimSpace(L(lang, "leavereq.body", u.Name, L(lang, "leave."+req.Type), dateRangeL(req.From, req.To, lang), req.Reason))
+	})
 	writeJSON(w, 201, map[string]any{"id": id})
 }
 
@@ -260,15 +258,13 @@ func (a *App) handleLeaveDecision(w http.ResponseWriter, r *http.Request, u *Use
 	} else if prev == "approved" {
 		a.dropCover(userID, from, to)
 	}
-	when := prettyDate(from)
-	if to != from {
-		when += " – " + prettyDate(to)
-	}
-	msg := fmt.Sprintf("Your %s for %s was %s by %s.", strings.ToLower(leaveTypes[typ]), when, req.Status, u.Name)
-	if req.Note != "" {
-		msg += " Note: " + req.Note
-	}
-	a.notify.Notify("leave", "Leave "+req.Status, msg, []int64{userID}, a.notify.channelsFor("staff"))
+	a.notify.NotifyEach("leave", []int64{userID}, a.notify.channelsFor("staff"), func(lang string) (string, string) {
+		msg := L(lang, "leave."+req.Status+".body", L(lang, "leave."+typ), dateRangeL(from, to, lang), u.Name)
+		if req.Note != "" {
+			msg += L(lang, "leave.note", req.Note)
+		}
+		return L(lang, "leave."+req.Status+".title"), msg
+	})
 	writeJSON(w, 200, res)
 }
 
@@ -448,18 +444,22 @@ func (a *App) assignSubstitutions(date string) (assigned, unfilled int) {
 	}
 	if unfilled > 0 {
 		managers, _ := a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN ('admin','principal','vice_principal','section_head')`)
-		a.notify.Notify("staff", "Relief cover needed", fmt.Sprintf("%d period(s) on %s have no free teacher. Please assign cover in Substitutions.", unfilled, prettyDate(date)), managers, []string{"app"})
+		a.notify.NotifyEach("staff", managers, []string{"app"}, func(lang string) (string, string) {
+			return L(lang, "unfilled.title"), L(lang, "unfilled.body", fmt.Sprint(unfilled), dateL(date, lang))
+		})
 	}
 	return
 }
 
 func (a *App) notifyRelief(teacher int64, date string, list []subDuty) {
 	sort.Slice(list, func(i, j int) bool { return list[i].period < list[j].period })
-	var lines []string
-	for _, d := range list {
-		lines = append(lines, fmt.Sprintf("Period %d (%s): %s %s – covering for %s", d.period, d.time, d.class, d.subject, d.who))
-	}
-	a.notify.Notify("substitution", "Relief duty on "+prettyDate(date), strings.Join(lines, "\n"), []int64{teacher}, a.notify.channelsFor("staff"))
+	a.notify.NotifyEach("substitution", []int64{teacher}, a.notify.channelsFor("staff"), func(lang string) (string, string) {
+		var lines []string
+		for _, d := range list {
+			lines = append(lines, L(lang, "relief.line", fmt.Sprint(d.period), d.time, d.class, d.subject, d.who))
+		}
+		return L(lang, "relief.title", dateL(date, lang)), strings.Join(lines, "\n")
+	})
 }
 
 func (a *App) handleListSubstitutions(w http.ResponseWriter, r *http.Request, u *User) {

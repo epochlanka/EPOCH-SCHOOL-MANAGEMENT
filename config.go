@@ -38,6 +38,8 @@ type Config struct {
 	WAAPIVersion   string
 	WATemplate     string
 	WATemplateLang string
+	WAAPIToken     string // waapi.app API token
+	WAAPIInstance  string // waapi.app instance ID
 
 	AIModel string
 }
@@ -79,6 +81,8 @@ func loadConfig() Config {
 		WAAPIVersion:   env("WHATSAPP_API_VERSION", "v21.0"),
 		WATemplate:     env("WHATSAPP_TEMPLATE", ""),
 		WATemplateLang: env("WHATSAPP_TEMPLATE_LANG", "en"),
+		WAAPIToken:     env("WAAPI_TOKEN", ""),
+		WAAPIInstance:  env("WAAPI_INSTANCE_ID", ""),
 
 		AIModel: env("AI_MODEL", "claude-opus-5-5"),
 	}

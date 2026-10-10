@@ -160,7 +160,7 @@ func (req *userReq) validate(creating bool) string {
 	if !creating && req.Password != "" && len(req.Password) < 6 {
 		return "Password must be at least 6 characters"
 	}
-	if req.Language == "" {
+	if !validLanguage(req.Language) {
 		req.Language = "English"
 	}
 	if req.WhatsApp == "" {
@@ -422,6 +422,7 @@ func (a *App) handleSaveStudent(w http.ResponseWriter, r *http.Request, u *User)
 		ParentEmail    string `json:"parent_email"`
 		ParentPhone    string `json:"parent_phone"`
 		ParentPassword string `json:"parent_password"`
+		ParentLanguage string `json:"parent_language"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		errJSON(w, 400, err.Error())
@@ -433,7 +434,7 @@ func (a *App) handleSaveStudent(w http.ResponseWriter, r *http.Request, u *User)
 		return
 	}
 	if req.ParentID == 0 && strings.TrimSpace(req.ParentEmail) != "" {
-		pr := userReq{Name: req.ParentName, Email: req.ParentEmail, Phone: req.ParentPhone, Role: "parent", Password: req.ParentPassword}
+		pr := userReq{Name: req.ParentName, Email: req.ParentEmail, Phone: req.ParentPhone, Role: "parent", Password: req.ParentPassword, Language: req.ParentLanguage}
 		if pr.Password == "" {
 			pr.Password = newToken()[:10]
 		}

@@ -204,7 +204,7 @@ func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 400, err.Error())
 		return
 	}
-	if req.Language == "" {
+	if !validLanguage(req.Language) {
 		req.Language = "English"
 	}
 	if _, err := a.db.Exec(`UPDATE users SET phone=?, whatsapp=?, language=? WHERE id=?`,
@@ -213,6 +213,19 @@ func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, u *User) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// handleSetLanguage changes only the user's language (app screens and the messages they receive).
+func (a *App) handleSetLanguage(w http.ResponseWriter, r *http.Request, u *User) {
+	var req struct {
+		Language string `json:"language"`
+	}
+	if err := readJSON(r, &req); err != nil || !validLanguage(req.Language) {
+		errJSON(w, 400, "Language must be English, Sinhala or Tamil")
+		return
+	}
+	a.db.Exec(`UPDATE users SET language=? WHERE id=?`, req.Language, u.ID)
+	writeJSON(w, 200, map[string]string{"language": req.Language})
 }
 
 func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request, u *User) {

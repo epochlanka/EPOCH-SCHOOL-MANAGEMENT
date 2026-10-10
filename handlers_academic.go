@@ -107,22 +107,17 @@ func (a *App) handleSaveAttendance(w http.ResponseWriter, r *http.Request, u *Us
 			if a.db.QueryRow(`SELECT name, parent_id FROM students WHERE id=?`, c.studentID).Scan(&name, &parentID) != nil || !parentID.Valid {
 				continue
 			}
-			var title, body string
-			switch c.status {
-			case "absent":
-				title = "Absent Alert"
-				body = fmt.Sprintf("Dear Parent, your child %s was marked ABSENT today (%s). Please contact the class teacher for more information.", name, prettyDate(req.Date))
-			case "late":
-				title = "Late Arrival"
-				body = fmt.Sprintf("Dear Parent, your child %s arrived LATE to school today (%s).", name, prettyDate(req.Date))
-			case "present":
-				if !notifyPresent {
-					continue
-				}
-				title = "Attendance Update"
-				body = fmt.Sprintf("Dear Parent, your child %s was marked Present today (%s). Have a great day! – %s", name, prettyDate(req.Date), school)
+			status := c.status
+			if status == "present" && !notifyPresent {
+				continue
 			}
-			if n, err := a.notify.Notify("attendance", title, body, []int64{parentID.Int64}, channels); err == nil {
+			msg := func(lang string) (string, string) {
+				if status == "present" {
+					return L(lang, "present.title"), L(lang, "present.body", name, dateL(req.Date, lang), school)
+				}
+				return L(lang, status+".title"), L(lang, status+".body", name, dateL(req.Date, lang))
+			}
+			if n, err := a.notify.NotifyEach("attendance", []int64{parentID.Int64}, channels, msg); err == nil {
 				alerts += n
 			} else {
 				log.Printf("attendance alert: %v", err)
@@ -214,8 +209,9 @@ func (a *App) handleCreateFees(w http.ResponseWriter, r *http.Request, u *User) 
 	sent := 0
 	if req.Notify {
 		parents, _ := a.queryIDs(`SELECT parent_id FROM students WHERE id IN (`+placeholders(len(ids))+`)`, int64Args(ids)...)
-		body := fmt.Sprintf("Dear Parent, a new fee \"%s\" of %s has been issued. Due date: %s.", req.Title, money(req.Amount), prettyDate(req.DueDate))
-		sent, _ = a.notify.Notify("fees", "New Fee Issued", body, parents, a.notify.channelsFor("fees"))
+		sent, _ = a.notify.NotifyEach("fees", parents, a.notify.channelsFor("fees"), func(lang string) (string, string) {
+			return L(lang, "feenew.title"), L(lang, "feenew.body", req.Title, money(req.Amount), dateL(req.DueDate, lang))
+		})
 	}
 	writeJSON(w, 201, map[string]any{"created": len(ids), "notified": sent})
 }
@@ -237,8 +233,9 @@ func (a *App) handlePayFee(w http.ResponseWriter, r *http.Request, u *User) {
 		return
 	}
 	if parentID.Valid {
-		body := fmt.Sprintf("Dear Parent, we have received %s for \"%s\" (%s). Thank you!", money(amount), title, name)
-		a.notify.Notify("fees", "Payment Received", body, []int64{parentID.Int64}, []string{"app", "sms"})
+		a.notify.NotifyEach("fees", []int64{parentID.Int64}, []string{"app", "sms"}, func(lang string) (string, string) {
+			return L(lang, "paid.title"), L(lang, "paid.body", money(amount), title, name)
+		})
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
@@ -305,15 +302,15 @@ func (a *App) sendFeeReminders(feeID int64, force bool) (int, error) {
 	channels := a.notify.channelsFor("fees")
 	count := 0
 	for _, f := range list {
-		var title, body string
+		key := "feedue"
 		if f.due < t {
-			title = "Fee Overdue"
-			body = fmt.Sprintf("Dear Parent, the fee \"%s\" of %s for %s was due on %s and is now overdue. Kindly settle it at the earliest. Please ignore if already paid.", f.title, money(f.amount), f.name, prettyDate(f.due))
-		} else {
-			title = "Fee Reminder"
-			body = fmt.Sprintf("Dear Parent, fee \"%s\" of %s for %s is due on %s. Please ignore if already paid.", f.title, money(f.amount), f.name, prettyDate(f.due))
+			key = "feeover"
 		}
-		if _, err := a.notify.Notify("fees", title, body, []int64{f.parent}, channels); err != nil {
+		f := f
+		msg := func(lang string) (string, string) {
+			return L(lang, key+".title"), L(lang, key+".body", f.title, money(f.amount), f.name, dateL(f.due, lang))
+		}
+		if _, err := a.notify.NotifyEach("fees", []int64{f.parent}, channels, msg); err != nil {
 			return count, err
 		}
 		a.db.Exec(`UPDATE fees SET last_reminded=? WHERE id=?`, t, f.id)
@@ -391,11 +388,10 @@ func (a *App) handleCreateHomework(w http.ResponseWriter, r *http.Request, u *Us
 	}
 	sent := 0
 	if req.Notify {
-		body := fmt.Sprintf("%s (%s): %s. Due: %s.", req.Subject, a.classLabel(req.ClassID), req.Title, prettyDate(req.DueDate))
-		if req.Description != "" {
-			body += " " + req.Description
-		}
-		sent, _ = a.notify.Notify("homework", "Homework Assigned", body, a.classAudience(req.ClassID), a.notify.channelsFor("homework"))
+		class := a.classLabel(req.ClassID)
+		sent, _ = a.notify.NotifyEach("homework", a.classAudience(req.ClassID), a.notify.channelsFor("homework"), func(lang string) (string, string) {
+			return L(lang, "hw.title"), joinNonEmpty(L(lang, "hw.body", req.Subject, class, req.Title, dateL(req.DueDate, lang)), req.Description)
+		})
 	}
 	writeJSON(w, 201, map[string]any{"ok": true, "notified": sent})
 }
@@ -463,11 +459,14 @@ func (a *App) handleCreateExam(w http.ResponseWriter, r *http.Request, u *User) 
 	}
 	sent := 0
 	if req.Notify {
-		body := fmt.Sprintf("%s – %s for %s. Date: %s", req.Title, req.Subject, a.classLabel(req.ClassID), prettyDate(req.ExamDate))
-		if req.ExamTime != "" {
-			body += ", Time: " + req.ExamTime
-		}
-		sent, _ = a.notify.Notify("exams", "Exam Notice", body+".", a.classAudience(req.ClassID), a.notify.channelsFor("exams"))
+		class := a.classLabel(req.ClassID)
+		sent, _ = a.notify.NotifyEach("exams", a.classAudience(req.ClassID), a.notify.channelsFor("exams"), func(lang string) (string, string) {
+			body := L(lang, "exam.body", req.Title, req.Subject, class, dateL(req.ExamDate, lang))
+			if req.ExamTime != "" {
+				body += L(lang, "exam.time", req.ExamTime)
+			}
+			return L(lang, "exam.title"), body + "."
+		})
 	}
 	writeJSON(w, 201, map[string]any{"ok": true, "notified": sent})
 }
@@ -569,8 +568,11 @@ func (a *App) handleSaveResults(w http.ResponseWriter, r *http.Request, u *User)
 		channels := a.notify.channelsFor("results")
 		for _, x := range list {
 			pct := x.marks * 100 / maxMarks
-			body := fmt.Sprintf("%s – %s %s: %g/%g (%.0f%%, Grade %s).", x.name, subject, title, x.marks, maxMarks, pct, grade(pct))
-			n, _ := a.notify.Notify("results", "Result Published", body, []int64{x.parent.Int64, x.userID.Int64}, channels)
+			x := x
+			n, _ := a.notify.NotifyEach("results", []int64{x.parent.Int64, x.userID.Int64}, channels, func(lang string) (string, string) {
+				return L(lang, "result.title"), L(lang, "result.body", x.name, subject, title,
+					fmt.Sprintf("%g", x.marks), fmt.Sprintf("%g", maxMarks), fmt.Sprintf("%.0f", pct), grade(pct))
+			})
 			sent += n
 		}
 	}

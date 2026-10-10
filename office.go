@@ -141,9 +141,10 @@ func (a *App) handleEnrol(w http.ResponseWriter, r *http.Request, u *User) {
 		return
 	}
 	if req.Welcome {
-		body := fmt.Sprintf("Dear Parent, welcome to %s! %s has been enrolled in %s. Download the school app and sign in with %s to receive attendance, homework and fee updates.",
-			a.setting("school_name"), child, a.classLabel(req.ClassID), req.ParentEmail)
-		a.notify.Notify("announcement", "Welcome to "+a.setting("school_name"), body, []int64{parentID}, []string{"app", "sms", "whatsapp"})
+		school, class := a.setting("school_name"), a.classLabel(req.ClassID)
+		a.notify.NotifyEach("announcement", []int64{parentID}, []string{"app", "sms", "whatsapp"}, func(lang string) (string, string) {
+			return L(lang, "welcome.title", school), L(lang, "welcome.body", school, child, class, req.ParentEmail)
+		})
 	}
 	writeJSON(w, 200, map[string]any{"student_id": sid})
 }
@@ -270,8 +271,10 @@ func (a *App) handleRemindOverdueBooks(w http.ResponseWriter, r *http.Request, u
 	}
 	rows.Close()
 	for _, x := range list {
-		body := fmt.Sprintf("Dear Parent, the library book \"%s\" borrowed by %s was due on %s. Please return it to the library.", x.title, x.student, prettyDate(x.due))
-		a.notify.Notify("library", "Library book overdue", body, []int64{x.parent.Int64, x.user.Int64}, a.notify.channelsFor("library"))
+		x := x
+		a.notify.NotifyEach("library", []int64{x.parent.Int64, x.user.Int64}, a.notify.channelsFor("library"), func(lang string) (string, string) {
+			return L(lang, "library.title"), L(lang, "library.body", x.title, x.student, dateL(x.due, lang))
+		})
 		a.db.Exec(`UPDATE loans SET last_reminded=? WHERE id=?`, t, x.id)
 	}
 	writeJSON(w, 200, map[string]int{"reminded": len(list)})

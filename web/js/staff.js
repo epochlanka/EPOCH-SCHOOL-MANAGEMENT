@@ -49,8 +49,9 @@ function renderStaff() {
     <div class="main">
       <header class="topbar">
         <button class="icon-btn menu-toggle" id="menuBtn" aria-label="Menu">${icon('menu')}</button>
-        <div><h1>${esc(item.label)}</h1><div class="crumb">${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div></div>
+        <div><h1>${esc(item.label)}</h1><div class="crumb">${localDate(new Date(), true)}</div></div>
         <div class="spacer"></div>
+        ${langPicker('compact')}
         <button class="icon-btn" id="themeBtn" title="Toggle dark mode" aria-label="Toggle dark mode">${icon('moon')}</button>
         <button class="icon-btn" id="bellBtn" title="Notifications" aria-label="Notifications">${icon('bell')}${S.unread ? `<span class="dot">${S.unread}</span>` : ''}</button>
         <div class="user-chip" id="userChip" title="My profile"><div class="avatar">${esc(initials(S.me.name))}</div><div class="meta"><b>${esc(S.me.name)}</b><br><small>${esc(S.roleLabel)}</small></div></div>
@@ -92,7 +93,8 @@ function profileModal() {
       await PUT('/api/me', v);
       Object.assign(S.me, { phone: v.phone, whatsapp: v.whatsapp, language: v.language });
       if (v.new) await POST('/api/me/password', { current: v.current, new: v.new });
-      toast('Profile updated', 'success');
+      toast(t('Profile updated'), 'success');
+      if (LANG_CODES[v.language] !== LANG) setLang(LANG_CODES[v.language], false);
     },
   });
 }
@@ -108,23 +110,23 @@ PAGES.dashboard = async (el) => {
   const deg = (v) => (marked ? (v / marked) * 360 : 0);
   el.innerHTML = `<div class="stack">
     <div class="grid g-4">
-      ${stat('student', 'tint-blue', num(d.counts.students), 'Students', `${num(d.counts.classes)} classes · ${num(d.counts.teachers)} teachers`)}
-      ${stat('calendar', 'tint-green', marked ? pct + '%' : '—', "Today's attendance", `${a.absent} absent · ${a.late} late · ${a.unmarked} unmarked`)}
-      ${d.can_fees ? stat('money', 'tint-red', 'Rs. ' + num(Math.round(d.fees.outstanding)), 'Outstanding fees', `${d.fees.overdue_count} overdue (${money(d.fees.overdue_amount)})`) : stat('send', 'tint-violet', num(d.sent_today), 'Messages sent today', `${num(d.counts.parents)} parents connected`)}
-      ${stat('users', 'tint-teal', `${d.staff_attendance.present + d.staff_attendance.late}/${d.counts.teachers}`, 'Teachers in school', `${d.staff_attendance.on_leave} on leave · ${d.staff_attendance.absent} absent · ${d.staff_attendance.not_marked} not checked in`)}
+      ${stat('student', 'tint-blue', num(d.counts.students), 'Students', `${num(d.counts.classes)} ${t('classes')} · ${num(d.counts.teachers)} ${t('teachers')}`)}
+      ${stat('calendar', 'tint-green', marked ? pct + '%' : '—', "Today's attendance", `${a.absent} ${t('absent')} · ${a.late} ${t('late')} · ${a.unmarked} ${t('unmarked')}`)}
+      ${d.can_fees ? stat('money', 'tint-red', 'Rs. ' + num(Math.round(d.fees.outstanding)), 'Outstanding fees', `${d.fees.overdue_count} ${t('overdue')} (${money(d.fees.overdue_amount)})`) : stat('send', 'tint-violet', num(d.sent_today), 'Messages sent today', `${num(d.counts.parents)} parents connected`)}
+      ${stat('users', 'tint-teal', `${d.staff_attendance.present + d.staff_attendance.late}/${d.counts.teachers}`, 'Teachers in school', `${d.staff_attendance.on_leave} ${t('on leave')} · ${d.staff_attendance.absent} ${t('absent')} · ${d.staff_attendance.not_marked} ${t('not checked in')}`)}
     </div>
     <div class="grid g-2">
       <div class="card"><div class="card-h"><h3>Teachers today</h3><span class="spacer"></span>${can('staff.view') ? '<a class="btn sm" href="#/staffatt">Teacher attendance</a>' : ''}</div>
         <div class="card-b row" style="gap:8px">
-          <span class="badge green">Present ${d.staff_attendance.present}</span><span class="badge amber">Late ${d.staff_attendance.late}</span>
-          <span class="badge blue">On leave ${d.staff_attendance.on_leave}</span><span class="badge red">Absent ${d.staff_attendance.absent}</span>
-          <span class="badge">Not checked in ${d.staff_attendance.not_marked}</span>
-          <span class="spacer"></span><a class="btn sm" href="#/subs">${icon('refresh')} Relief: ${d.substitutions.assigned} covered${d.substitutions.unfilled ? ` · <b style="color:var(--danger)">${d.substitutions.unfilled} uncovered</b>` : ''}</a>
+          <span class="badge green">${t('Present')} ${d.staff_attendance.present}</span><span class="badge amber">${t('Late')} ${d.staff_attendance.late}</span>
+          <span class="badge blue">${t('On leave')} ${d.staff_attendance.on_leave}</span><span class="badge red">${t('Absent')} ${d.staff_attendance.absent}</span>
+          <span class="badge">${t('Not checked in')} ${d.staff_attendance.not_marked}</span>
+          <span class="spacer"></span><a class="btn sm" href="#/subs">${icon('refresh')} ${t('Relief')}: ${d.substitutions.assigned} ${t('covered')}${d.substitutions.unfilled ? ` · <b style="color:var(--danger)">${d.substitutions.unfilled} ${t('uncovered')}</b>` : ''}</a>
         </div>
-        ${d.staff_away.length ? d.staff_away.map((s) => `<div class="list-item"><div class="avatar">${esc(initials(s.name))}</div><div class="grow"><div class="t1">${esc(s.name)}</div><div class="t2">${esc(s.role_label)}${s.leave_type ? ' · ' + esc(cap(s.leave_type)) + ' leave' : ''}</div></div>${badge(s.leave_type ? 'leave' : s.status, s.leave_type ? 'On leave' : cap(s.status))}</div>`).join('') : '<div class="empty">All staff are in school.</div>'}
+        ${d.staff_away.length ? d.staff_away.map((s) => `<div class="list-item"><div class="avatar">${esc(initials(s.name))}</div><div class="grow"><div class="t1">${esc(s.name)}</div><div class="t2">${esc(t(s.role_label))}${s.leave_type ? ' · ' + esc(t(cap(s.leave_type) + ' leave')) : ''}</div></div>${badge(s.leave_type ? 'leave' : s.status, s.leave_type ? 'On leave' : cap(s.status))}</div>`).join('') : '<div class="empty">All staff are in school.</div>'}
       </div>
       <div class="card"><div class="card-h"><h3>Leave requests awaiting approval</h3><span class="spacer"></span><a class="btn sm" href="#/leave">All requests</a></div>
-        ${d.pending_leave.length ? d.pending_leave.map((l) => `<div class="list-item">${catIcon('leave')}<div class="grow"><div class="t1">${esc(l.name)} <span class="muted small">${esc(l.role_label)}</span></div><div class="t2">${esc(l.type_label)} · ${fmtDate(l.from_date)}${l.to_date !== l.from_date ? ' – ' + fmtDate(l.to_date) : ''} (${l.days} day${l.days > 1 ? 's' : ''})${l.reason ? ' · ' + esc(l.reason) : ''}</div></div>
+        ${d.pending_leave.length ? d.pending_leave.map((l) => `<div class="list-item">${catIcon('leave')}<div class="grow"><div class="t1">${esc(l.name)} <span class="muted small">${esc(t(l.role_label))}</span></div><div class="t2">${esc(t(l.type_label))} · ${fmtDate(l.from_date)}${l.to_date !== l.from_date ? ' – ' + fmtDate(l.to_date) : ''} (${l.days} ${t(l.days > 1 ? 'days' : 'day')})${l.reason ? ' · ' + esc(l.reason) : ''}</div></div>
           ${d.can_approve ? `<div class="row" style="flex-wrap:nowrap"><button class="btn sm success" data-approve="${l.id}">${icon('check')} Approve</button><button class="btn sm danger" data-reject="${l.id}">${icon('x')}</button></div>` : ''}</div>`).join('') : '<div class="empty">No pending leave requests.</div>'}
       </div>
     </div>
@@ -139,7 +141,7 @@ PAGES.dashboard = async (el) => {
     </div></div>
     <div class="grid g-main">
       <div class="card"><div class="card-h"><h3>Attendance trend</h3><span class="muted small">last 2 weeks, % present</span></div>
-        <div class="card-b"><div class="bars">${d.trend.map((t) => `<div class="b"><em>${t.marked ? Math.round(t.percent) + '%' : '–'}</em><i style="height:${Math.max(3, t.percent * 1.2)}px;${t.marked ? '' : 'opacity:.25'}"></i><span>${esc(t.label)}</span></div>`).join('')}</div></div></div>
+        <div class="card-b"><div class="bars">${d.trend.map((t) => `<div class="b"><em>${t.marked ? Math.round(t.percent) + '%' : '–'}</em><i style="height:${Math.max(3, t.percent * 1.2)}px;${t.marked ? '' : 'opacity:.25'}"></i><span>${esc(t.label.replace(/^\w+/, (w) => tr(w)))}</span></div>`).join('')}</div></div></div>
       <div class="card"><div class="card-h"><h3>Today</h3><span class="spacer"></span><a class="btn sm" href="#/attendance">Open</a></div>
         <div class="card-b row" style="gap:22px;flex-wrap:nowrap">
           <div class="donut" style="background:conic-gradient(var(--success) 0 ${deg(a.present)}deg, var(--orange) 0 ${deg(a.present + a.late)}deg, var(--danger) 0 ${deg(marked)}deg, var(--surface-2) 0)"><div><div><b>${marked ? pct + '%' : '—'}</b><div class="muted small">present</div></div></div></div>
@@ -203,6 +205,10 @@ PAGES.compose = async (el) => {
         <div class="row" style="margin:-6px 0 14px">${S.aiEnabled ? ['Sinhala', 'Tamil', 'English'].map((l) => `<button type="button" class="btn sm" data-tr="${l}">${icon('translate')} ${l}</button>`).join('') : ''}<span class="muted small right" id="charCount"></span></div>
         <label style="font-weight:600;font-size:13px">Channels</label>
         <div class="channel-pick mt">${['app', 'sms', 'whatsapp'].map((c) => `<label><input type="checkbox" name="ch_${c}" value="${c}" data-group="channels" ${c !== 'sms' ? 'checked' : ''}><span class="ch-ic" style="background:${CH[c].color}">${icon(CH[c].icon)}</span>${CH[c].label}</label>`).join('')}</div>
+        <div class="ai-panel mt" style="padding:12px 14px">${S.aiEnabled ? `<div class="row"><label class="check"><input type="checkbox" name="translate" checked> Translate for each recipient</label>
+          <span class="spacer"></span><span class="muted small">Written in</span><select class="input" name="language" style="width:auto">${['English', 'Sinhala', 'Tamil'].map((l) => `<option value="${l}" ${LANG_NAMES[LANG] === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+          <p class="muted small" style="margin:6px 0 0">Each parent gets the message in their own language (Sinhala, Tamil or English) using Epoch AI.</p>`
+          : `<p class="muted small" style="margin:0">Automatic messages (attendance, fees, homework…) are always sent in each person's chosen language.</p>`}</div>
         <div class="row mt"><button class="btn primary" type="submit">${icon('send')} Send now</button></div>
       </div></form>
     </div>
@@ -277,8 +283,8 @@ PAGES.compose = async (el) => {
     if (!v.channels.length) return toast('Choose at least one channel', 'error');
     const btn = $('button[type=submit]', form); btn.disabled = true;
     try {
-      const r = await POST('/api/announcements', { title: v.title, body: v.body, audience: v.audience, audience_id: Number(v.audience_id || 0), channels: v.channels, category: v.category });
-      toast(`Sent to ${r.recipients} recipient(s)`, 'success');
+      const r = await POST('/api/announcements', { title: v.title, body: v.body, audience: v.audience, audience_id: Number(v.audience_id || 0), channels: v.channels, category: v.category, translate: !!v.translate, language: v.language || 'English' });
+      toast(`${t('Sent')}: ${r.recipients} · ${r.languages.map((l) => t(l)).join(', ')}${r.translation_failed ? ' · translation failed for ' + r.translation_failed + ' language(s), original sent' : ''}`, r.translation_failed ? '' : 'success');
       PAGES.compose(el);
     } catch (err) { toast(err.message, 'error'); btn.disabled = false; }
   });
@@ -438,6 +444,7 @@ PAGES.students = async (el) => {
       ], s) + `<div id="newParent" class="form-grid" style="${s.parent_id ? 'display:none' : ''}">
         ${field({ name: 'parent_name', label: 'Parent name' })}${field({ name: 'parent_phone', label: 'Parent mobile (WhatsApp)', placeholder: '07X XXX XXXX' })}
         ${field({ name: 'parent_email', label: 'Parent login email' })}${field({ name: 'parent_password', label: 'Parent password', hint: 'Share this with the parent so they can sign in to the app.' })}
+        ${field({ name: 'parent_language', label: "Parent's language", type: 'select', options: ['English', 'Sinhala', 'Tamil'] })}
       </div>`,
       onOpen: (f) => { f.elements.parent_id.onchange = () => { $('#newParent', f).style.display = f.elements.parent_id.value == 0 ? '' : 'none'; }; },
       onSubmit: async (v) => {
@@ -620,7 +627,7 @@ PAGES.users = async (el) => {
     $('#ul', el).innerHTML = table([
       { label: 'Name', render: (r) => `<div class="row" style="flex-wrap:nowrap"><div class="avatar">${esc(initials(r.name))}</div><div><b>${esc(r.name)}</b><div class="muted small">${esc(r.email)}</div></div></div>` },
       { label: 'Role', render: (r) => badge(['admin', 'director', 'principal', 'vice_principal'].includes(r.role) ? 'leave' : '', r.role_label) },
-      { label: 'Mobile', key: 'phone' }, { label: 'Children', render: (r) => esc(r.children || '') },
+      { label: 'Mobile', key: 'phone' }, { label: 'Language', render: (r) => esc(t(r.language || 'English')) }, { label: 'Children', render: (r) => esc(r.children || '') },
       { label: 'Status', render: (r) => r.active ? badge('present', 'Active') : badge('absent', 'Disabled') },
       { label: '', render: (r) => `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end"><button class="btn sm" data-edit="${r.id}">${icon('edit')}</button>${r.id !== S.me.id ? `<button class="btn sm danger" data-del="${r.id}">${icon('trash')}</button>` : ''}</div>` },
     ], rows, 'No users found.');

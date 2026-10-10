@@ -6,9 +6,15 @@ function applyMe(r) {
   S.unread = r.unread_notifications; S.unreadMessages = r.unread_messages;
   S.perms = r.perms || []; S.roles = r.roles || []; S.roleLabel = r.role_label; S.isStaff = r.staff; S.teaching = r.teaching;
   S.pendingLeave = r.pending_leave || 0;
+  // The account's language wins, unless the user just picked one on the sign-in page.
+  const mine = LANG_CODES[r.user.language] || 'en';
+  if (pickedOnLogin && mine !== LANG) { pickedOnLogin = false; api('PUT', '/api/me/language', { language: LANG_NAMES[LANG] }).catch(() => {}); r.user.language = LANG_NAMES[LANG]; }
+  else if (mine !== LANG) { LANG = mine; try { localStorage.setItem('lang', mine); } catch {} document.documentElement.lang = mine; }
+  pickedOnLogin = false;
   document.title = `${r.school.name} · Epoch School Connect`;
 }
 
+let pickedOnLogin = false;
 function renderLogin() {
   $('#app').innerHTML = `<div class="login">
     <section class="login-hero">
@@ -26,6 +32,7 @@ function renderLogin() {
     </section>
     <section class="login-panel"><form class="login-card" id="loginForm">
       <img class="logo-full" src="assets/logo-full.png" alt="Epoch">
+      <div style="display:flex;justify-content:center;margin-bottom:18px">${langPicker()}</div>
       <h2>Welcome back</h2><div class="sub">Sign in to your school account</div>
       ${field({ name: 'email', label: 'Email', type: 'email', required: true, autocomplete: 'username', placeholder: 'you@school.lk' })}
       ${field({ name: 'password', label: 'Password', type: 'password', required: true, autocomplete: 'current-password' })}
@@ -33,6 +40,7 @@ function renderLogin() {
       <p class="muted small" style="text-align:center;margin-top:18px">Admins, teachers, parents and students all sign in here.</p>
     </form></section>
   </div>`;
+  $$('.lang-pick button', $('#app')).forEach((b) => b.addEventListener('click', () => { pickedOnLogin = true; }));
   $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = $('button', e.target); btn.disabled = true;

@@ -71,6 +71,8 @@ func newNotifier(a *App) *Notifier {
 		n.wa = &metaWhatsApp{hc, cfg}
 	case "twilio":
 		n.wa = &twilio{hc, cfg, true}
+	case "waapi":
+		n.wa = &waapi{hc, cfg}
 	default:
 		n.wa = logSender{"whatsapp"}
 	}
@@ -416,6 +418,54 @@ func (m *metaWhatsApp) Send(ctx context.Context, to, text string) (string, error
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		return "", readErrBody(resp)
+	}
+	return "sent", nil
+}
+
+// waapi sends WhatsApp messages through waapi.app, which links an ordinary WhatsApp
+// number (scanned with a QR code) instead of the official Business API. waapi reports
+// failures inside an HTTP 200 reply, so the inner status must be checked.
+type waapi struct {
+	hc  *http.Client
+	cfg Config
+}
+
+func (w *waapi) Name() string { return "waapi.app WhatsApp" }
+func (w *waapi) Send(ctx context.Context, to, text string) (string, error) {
+	if w.cfg.WAAPIToken == "" || w.cfg.WAAPIInstance == "" {
+		return "", errors.New("WAAPI_TOKEN / WAAPI_INSTANCE_ID not configured")
+	}
+	body, _ := json.Marshal(map[string]string{"chatId": normalizePhone(to, w.cfg.CountryCode) + "@c.us", "message": text})
+	endpoint := "https://waapi.app/api/v1/instances/" + url.PathEscape(w.cfg.WAAPIInstance) + "/client/action/send-message"
+	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+w.cfg.WAAPIToken)
+	resp, err := w.hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	var out struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Status      string `json:"status"`
+			Message     string `json:"message"`
+			Explanation string `json:"explanation"`
+		} `json:"data"`
+	}
+	json.Unmarshal(raw, &out)
+	if resp.StatusCode >= 300 || out.Status != "success" || out.Data.Status == "error" {
+		msg := strings.TrimSpace(strings.Join([]string{out.Message, out.Data.Message, out.Data.Explanation}, " "))
+		if msg == "" {
+			msg = strings.TrimSpace(string(raw))
+			if len(msg) > 300 {
+				msg = msg[:300]
+			}
+		}
+		return "", fmt.Errorf("waapi HTTP %d: %s", resp.StatusCode, msg)
 	}
 	return "sent", nil
 }

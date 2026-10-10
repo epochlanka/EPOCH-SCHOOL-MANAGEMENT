@@ -354,3 +354,17 @@ table.t { width: 100%; border-collapse: collapse; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tt-s { background: hsl(var(--h) 40% 20%); color: hsl(var(--h) 80% 85%); border-color: hsl(var(--h) 40% 30%); } }
 :root[data-theme="dark"] .tt-s { background: hsl(var(--h) 40% 20%); color: hsl(var(--h) 80% 85%); border-color: hsl(var(--h) 40% 30%); }
 @media print { .sidebar, .topbar, .tabs, #gen, .card-h .btn, .card-h select { display: none !important; } .shell { display: block; } .card { box-shadow: none; border: 0; } }
+
+/* Language switcher */
+.lang-pick { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 3px; background: var(--surface); gap: 2px; }
+.lang-pick button { border: 0; background: transparent; border-radius: 999px; padding: 5px 12px; font-weight: 600; font-size: 13px; cursor: pointer; color: var(--muted); font-family: inherit; }
+.lang-pick button.on { background: linear-gradient(135deg, #1f4fd1, #3b2fc0); color: #fff; }
+.lang-pick.compact button { padding: 4px 8px; font-size: 12px; }
+.lang-pick.wide { display: flex; } .lang-pick.wide button { flex: 1; padding: 9px; font-size: 14px; }
+@media (max-width: 980px) { .topbar .lang-pick.compact { display: none; } }
+:lang(si) body, :lang(si) .btn, :lang(ta) body, :lang(ta) .btn { letter-spacing: 0; }
+
+/* Long Sinhala/Tamil labels in the parent app's bottom menu */
+.bottom-nav button { line-height: 1.15; text-align: center; padding: 6px 2px; min-width: 0; overflow-wrap: anywhere; }
+:lang(si) .bottom-nav button, :lang(ta) .bottom-nav button { font-size: 9.5px; }
+:lang(ta) .tile { font-size: 11.5px; overflow-wrap: anywhere; }

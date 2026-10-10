@@ -32,7 +32,7 @@ async function renderPortal() {
     <div class="card child-card"><div class="avatar">${esc(initials(st.name))}</div><div style="min-width:0;flex:1">
       ${S.children.length > 1 ? `<select id="childSel">${S.children.map((c) => `<option value="${c.id}" ${c.id === P.childId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : `<b style="font-size:16px">${esc(st.name)}</b>`}
       <div class="muted small">${esc(st.class_name || '')} · ${esc(st.admission_no)}</div>
-      <div class="mt" style="margin-top:6px">${d.today_status ? `<span class="status-pill badge ${STATUS_BADGE[d.today_status]}">Today: ${cap(d.today_status)}</span>` : '<span class="status-pill badge">Today: not marked yet</span>'}</div>
+      <div class="mt" style="margin-top:6px">${d.today_status ? `<span class="status-pill badge ${STATUS_BADGE[d.today_status]}">${t('Today')}: ${t(cap(d.today_status))}</span>` : '<span class="status-pill badge">Today: not marked yet</span>'}</div>
     </div></div>` : `<div class="p-head" style="padding-bottom:18px;border-radius:0 0 20px 20px"><div class="p-top">
       <button class="icon-btn" onclick="location.hash='#/home'" aria-label="Back">${icon('home')}</button><b style="font-size:17px">${esc((TILES.find((t) => t[0] === view) || nav.find((n) => n[0] === view) || [, 'Home'])[1])}</b><span class="right muted small" style="color:#c6d3f5">${esc(st.name)}</span></div></div>`}
     <div class="p-body" id="pv"></div>
@@ -126,6 +126,7 @@ PV.ai = (el) => {
 
 PV.profile = (el) => {
   el.innerHTML = `<div class="card card-b row"><div class="avatar" style="width:54px;height:54px;font-size:19px">${esc(initials(S.me.name))}</div><div><b style="font-size:17px">${esc(S.me.name)}</b><div class="muted small">${esc(S.me.email)} · ${cap(S.me.role)}</div></div></div>
+  <div class="card card-b"><h3 style="margin-bottom:12px">Language</h3>${langPicker('wide')}<p class="muted small" style="margin:10px 0 0">The app and your WhatsApp, SMS and app messages will be in this language.</p></div>
   <form class="card card-b" id="pf"><h3 style="margin-bottom:12px">Contact details</h3>
     ${field({ name: 'phone', label: 'Mobile (SMS)', value: S.me.phone })}${field({ name: 'whatsapp', label: 'WhatsApp number', value: S.me.whatsapp })}
     ${field({ name: 'language', label: 'Preferred language', type: 'select', options: ['English', 'Sinhala', 'Tamil'], value: S.me.language })}
@@ -135,6 +136,6 @@ PV.profile = (el) => {
     <button class="btn">Update password</button></form>
   <div class="card card-b small"><b>${esc(S.school.name)}</b><div class="muted">${esc(S.school.address || '')}<br>${esc(S.school.phone || '')} · ${esc(S.school.email || '')}</div></div>
   <div class="row"><button class="btn" onclick="toggleTheme()">${icon('moon')} Dark mode</button><button class="btn danger right" onclick="logout()">${icon('logout')} Sign out</button></div>`;
-  $('#pf', el).addEventListener('submit', async (e) => { e.preventDefault(); const v = readForm(e.target); try { await PUT('/api/me', v); Object.assign(S.me, v); toast('Saved', 'success'); } catch (err) { toast(err.message, 'error'); } });
+  $('#pf', el).addEventListener('submit', async (e) => { e.preventDefault(); const v = readForm(e.target); try { await PUT('/api/me', v); Object.assign(S.me, v); toast(t('Saved'), 'success'); if (LANG_CODES[v.language] !== LANG) setLang(LANG_CODES[v.language], false); } catch (err) { toast(err.message, 'error'); } });
   $('#pw', el).addEventListener('submit', async (e) => { e.preventDefault(); try { await POST('/api/me/password', readForm(e.target)); e.target.reset(); toast('Password updated', 'success'); } catch (err) { toast(err.message, 'error'); } });
 };
