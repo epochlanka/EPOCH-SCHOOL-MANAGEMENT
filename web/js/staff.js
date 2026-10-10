@@ -15,6 +15,7 @@ const NAV = [
   { id: 'students', label: 'Students', icon: 'student', perm: 'students.view' },
   { id: 'timetable', label: 'Timetable', icon: 'diary', perm: '' },
   { id: 'pickups', label: 'Pickup Changes', icon: 'bus', perm: 'students.view', badge: () => S.pendingPickups },
+  { id: 'earlyleave', label: 'Early Leave Register', icon: 'logout', perm: 'gate' },
   { id: 'homework', label: 'Homework', icon: 'book', perm: 'academic' },
   { id: 'exams', label: 'Exams & Results', icon: 'exam', perm: 'academic' },
   { section: 'Staff' },
@@ -349,7 +350,7 @@ PAGES.attendance = async (el) => {
       const d = await GET(`/api/attendance?class_id=${$('#cls', box).value}&date=${$('#dt', box).value}`);
       d.students.forEach((s) => { state[s.student_id] = s.status; });
       $('#list', box).innerHTML = table([
-        { label: '#', render: (r, i) => i + 1 }, { label: 'Student', render: (r) => `<b>${esc(r.name)}</b><div class="muted small">${esc(r.admission_no)}</div>` },
+        { label: '#', render: (r, i) => i + 1 }, { label: 'Student', render: (r) => `<b>${esc(r.name)}</b><div class="muted small">${esc(r.admission_no)}</div>${r.left_early ? `<span class="badge amber">${t('Left early')} ${esc(r.left_early)}</span>` : ''}` },
         { label: 'Parent', key: 'parent_name' },
         { label: 'Status', render: (r) => `<div class="seg" data-id="${r.student_id}">${['present', 'absent', 'late'].map((s) => `<button type="button" data-s="${s}">${cap(s)}</button>`).join('')}</div>` },
       ], d.students, 'No students in this class.');

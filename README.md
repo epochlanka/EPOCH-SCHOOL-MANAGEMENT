@@ -48,6 +48,18 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 
   Parents open it from **Progress** in the app; staff open it from the trophy button on the Students page. The report is in the reader's language. With Epoch AI enabled, **Write with Epoch AI** produces a warmer written summary, saved once per child, language and day to keep costs down.
 
+## Early leave register
+
+Every time a child is collected before the end of the school day (a bereavement or funeral, illness, a hospital visit, an appointment, a family emergency…), staff record it under **Early Leave Register**. Each record requires:
+
+- **The collector:** full name, relationship and NIC/ID number (phone is optional)
+- **The reason:** a category plus written details
+- **The time:** filled in automatically
+
+The registered parent (and the student's account) is notified in the app at once, along with the class teacher. That matters most when someone other than the parent collects the child. The attendance sheet shows "Left early 10:40", and if the parent sent a pickup change that day the form fills in from it.
+
+Records are permanent. They can't be deleted, only **voided** by the principal, vice principal or admin with a reason, and the voided entry stays in the register. The register can be filtered by date and reason, flags children with 3 or more early leaves in 4 months, and exports to CSV. Front office, class teachers (own class), heads of section, the principal and admin can record early leaves.
+
 ## Quick start
 
 ### Testing (no build)

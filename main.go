@@ -214,6 +214,12 @@ func (a *App) routes() http.Handler {
 	h("POST /api/pickups/{id}/cancel", anyone, a.handleCancelPickup)
 	h("GET /api/progress/{id}", anyone, a.handleProgress)
 
+	// Early leave register
+	h("GET /api/early-leaves", PGate, a.handleListEarlyLeaves)
+	h("POST /api/early-leaves", PGate, a.handleCreateEarlyLeave)
+	h("POST /api/early-leaves/{id}/return", PGate, a.handleEarlyLeaveReturn)
+	h("POST /api/early-leaves/{id}/void", PGate, a.handleVoidEarlyLeave)
+
 	// Admissions & library
 	h("GET /api/admissions", PAdmissions, a.handleListAdmissions)
 	h("POST /api/admissions", PAdmissions, a.handleSaveAdmission)

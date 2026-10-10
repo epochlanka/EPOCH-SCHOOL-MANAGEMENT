@@ -22,10 +22,11 @@ func (a *App) handleGetAttendance(w http.ResponseWriter, r *http.Request, u *Use
 		return
 	}
 	rows, err := a.queryMaps(`SELECT s.id AS student_id, s.name, s.admission_no, p.name AS parent_name,
-		COALESCE(a.status,'') AS status
+		COALESCE(a.status,'') AS status,
+		(SELECT e.time_out FROM early_leaves e WHERE e.student_id=s.id AND e.date=? AND e.voided=0 ORDER BY e.id DESC LIMIT 1) AS left_early
 		FROM students s LEFT JOIN attendance a ON a.student_id=s.id AND a.date=?
 		LEFT JOIN users p ON p.id=s.parent_id
-		WHERE s.class_id=? ORDER BY s.name`, date, classID)
+		WHERE s.class_id=? ORDER BY s.name`, date, date, classID)
 	if err != nil {
 		serverError(w, err)
 		return

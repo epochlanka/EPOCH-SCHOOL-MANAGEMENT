@@ -30,11 +30,12 @@ const (
 	PLibrary       = "library"        // books and loans
 	PAICompose     = "ai.compose"     // AI message writer
 	PAIData        = "ai.data"        // AI assistant with school-wide data
+	PGate          = "gate"           // early leave register (scoped to own classes)
 )
 
 var allPerms = []string{PDashboard, PUsers, PSettings, PSetup, PStudentsView, PStudentsEdit, PAttendance,
 	PFeesView, PFeesEdit, PAcademic, PAnnounce, PAnnounceAll, PReports, PTransport, PStaffView, PStaffMark,
-	PLeaveApprove, PTimetableEdit, PSubstitutions, PAdmissions, PLibrary, PAICompose, PAIData}
+	PLeaveApprove, PTimetableEdit, PSubstitutions, PAdmissions, PLibrary, PAICompose, PAIData, PGate}
 
 type roleInfo struct {
 	Label    string
@@ -50,13 +51,13 @@ var roles = map[string]roleInfo{
 	"director":       {"Director", false, []string{PDashboard, PStudentsView, PFeesView, PReports, PStaffView, PLeaveApprove, PAnnounce, PAnnounceAll, PAdmissions, PAICompose, PAIData}},
 	"principal":      {"Principal", true, without(allPerms, PSettings)},
 	"vice_principal": {"Vice Principal", true, without(allPerms, PSettings, PUsers, PFeesEdit)},
-	"section_head": {"Head of Section", true, []string{PDashboard, PStudentsView, PAttendance, PAcademic, PAnnounce, PReports, PTransport,
+	"section_head": {"Head of Section", true, []string{PGate, PDashboard, PStudentsView, PAttendance, PAcademic, PAnnounce, PReports, PTransport,
 		PStaffView, PStaffMark, PLeaveApprove, PSubstitutions, PAICompose, PAIData}},
-	"class_teacher":   {"Class Teacher", true, []string{PStudentsView, PAttendance, PAcademic, PAnnounce, PAICompose, PAIData}},
+	"class_teacher":   {"Class Teacher", true, []string{PGate, PStudentsView, PAttendance, PAcademic, PAnnounce, PAICompose, PAIData}},
 	"subject_teacher": {"Subject Teacher", true, []string{PStudentsView, PAcademic, PAnnounce, PAICompose}},
 	"accountant":      {"Accountant", false, []string{PDashboard, PStudentsView, PFeesView, PFeesEdit, PReports, PAnnounce, PAnnounceAll, PAICompose}},
 	"admissions":      {"Admissions Officer", false, []string{PAdmissions, PStudentsView, PStudentsEdit, PAICompose}},
-	"front_office":    {"Front Office", false, []string{PStudentsView, PStudentsEdit, PAnnounce, PAnnounceAll, PTransport, PStaffView, PStaffMark, PAdmissions, PAICompose}},
+	"front_office":    {"Front Office", false, []string{PGate, PStudentsView, PStudentsEdit, PAnnounce, PAnnounceAll, PTransport, PStaffView, PStaffMark, PAdmissions, PAICompose}},
 	"librarian":       {"Librarian", false, []string{PLibrary, PStudentsView, PAICompose}},
 	"parent":          {"Parent", false, nil},
 	"student":         {"Student", false, nil},

@@ -97,7 +97,10 @@ PV.pickup = async (el, d) => {
       <div id="pkx"></div>
       ${field({ name: 'note', label: 'Note to the school (optional)', type: 'textarea', rows: 2 })}
       <button class="btn primary block">${icon('send')} Send to school</button></form>
-    <div class="card"><div class="card-h"><h3>My pickup changes</h3></div><div id="pkl">${loading()}</div></div>`;
+    <div class="card"><div class="card-h"><h3>My pickup changes</h3></div><div id="pkl">${loading()}</div></div>
+    <div class="card"><div class="card-h"><h3>Early leave record</h3><span class="muted small">kept by the school</span></div>
+      ${(d.early_leaves || []).length ? d.early_leaves.map((e) => `<div class="list-item">${catIcon('attendance')}<div class="grow"><div class="t1">${fmtDate(e.date)} · ${esc(e.time_out)}${e.returned_at ? ` → ${t('back')} ${esc(e.returned_at)}` : ''}</div>
+        <div class="t2">${esc(labelOf(EARLY_REASONS, e.reason_type))} · <span data-noi18n>${esc(e.collector_name)}</span> (${esc(labelOf(RELATIONS, e.collector_relation))})</div><div class="small" data-noi18n>${esc(e.reason)}</div></div></div>`).join('') : '<div class="empty">No early leaves recorded.</div>'}</div>`;
   const form = $('#pkf', el), extra = $('#pkx', el);
   const showExtra = () => {
     const k = form.elements.kind.value;
@@ -121,4 +124,100 @@ PV.pickup = async (el, d) => {
     catch (err) { toast(err.message, 'error'); }
   });
   await loadList();
+};
+
+/* ---------- Early leave register ---------- */
+const EARLY_REASONS = [['bereavement', 'Family bereavement / funeral'], ['illness', 'Student unwell'], ['family_illness', 'Family illness / hospital'],
+  ['medical', 'Medical / dental appointment'], ['emergency', 'Family emergency'], ['religious', 'Religious / cultural event'], ['other', 'Other']];
+const RELATIONS = [['mother', 'Mother'], ['father', 'Father'], ['grandparent', 'Grandparent'], ['guardian', 'Guardian'], ['sibling', 'Brother / sister'],
+  ['relative', 'Relative'], ['driver', 'Family driver'], ['other', 'Other']];
+const labelOf = (list, k) => t((list.find((x) => x[0] === k) || [, k])[1]);
+const guessRelation = (s) => { s = String(s || '').toLowerCase(); return /grand|seeya|achchi|aachchi|paati|thatha/.test(s) ? 'grandparent' : /mother|amma/.test(s) ? 'mother' : /father|thaththa|appa/.test(s) ? 'father' : /driver/.test(s) ? 'driver' : /brother|sister|aiya|akka|nangi|malli/.test(s) ? 'sibling' : /aunt|uncle|cousin|relative|nanda|mama/.test(s) ? 'relative' : /guardian/.test(s) ? 'guardian' : 'other'; };
+
+async function recordEarlyLeave(done) {
+  const students = await GET('/api/students');
+  const m = modal({
+    title: 'Record early leave', submit: 'Save record', wide: true,
+    body: `<div class="field"><label>Student *</label><input class="input" id="elq" placeholder="Type a name or admission number…" autocomplete="off">
+        <select class="input" name="student_id" size="5" required style="margin-top:6px">${students.map((s) => `<option value="${s.id}">${esc(s.name)} · ${esc(s.admission_no)} · ${esc(s.class_name || '')}</option>`).join('')}</select></div>
+      <div id="elpre"></div>
+      <div class="form-grid">
+        ${field({ name: 'collector_name', label: 'Collected by (full name)', required: true })}
+        ${field({ name: 'collector_relation', label: 'Relationship to the child', type: 'select', required: true, options: RELATIONS })}
+        ${field({ name: 'collector_id_no', label: 'NIC / ID number', required: true, placeholder: '199012345678 or 901234567V' })}
+        ${field({ name: 'collector_phone', label: 'Their mobile number', placeholder: '07X XXX XXXX' })}
+        ${field({ name: 'reason_type', label: 'Reason', type: 'select', required: true, options: EARLY_REASONS })}
+        ${field({ name: 'time_out', label: 'Time leaving', type: 'time', value: new Date().toTimeString().slice(0, 5) })}
+        ${field({ name: 'reason', label: 'Details (kept in the student\'s record)', type: 'textarea', required: true, full: true, rows: 3, placeholder: 'e.g. Grandmother passed away; going to the funeral in Kandy. Expected back on Monday.' })}
+      </div>
+      <input type="hidden" name="pickup_request_id" value="">
+      <p class="muted small">Check the collector's NIC before the child leaves. The parent is notified in the app as soon as you save.</p>`,
+    onSubmit: async (v) => {
+      if (!v.student_id) throw new Error(t('Choose the student'));
+      const r = await POST('/api/early-leaves', { ...v, student_id: Number(v.student_id), pickup_request_id: Number(v.pickup_request_id || 0) });
+      toast(t(r.parent_notified ? 'Early leave recorded · parent notified' : 'Early leave recorded'), 'success');
+      done && done();
+    },
+  });
+  const f = m.form, sel = f.elements.student_id;
+  sel.onchange = () => {};
+  $('#elq', f).oninput = (e) => {
+    const q = e.target.value.toLowerCase();
+    [...sel.options].forEach((o) => { o.hidden = q && !o.textContent.toLowerCase().includes(q); });
+    const first = [...sel.options].find((o) => !o.hidden); if (first) { sel.value = first.value; sel.onchange(); }
+  };
+  // Prefill from a pickup change the parent sent today.
+  const pickups = await GET('/api/pickups?date=' + todayStr()).catch(() => []);
+  sel.onchange = () => {
+    const p = pickups.find((x) => String(x.student_id) === sel.value && x.status !== 'declined');
+    $('#elpre', f).innerHTML = p ? `<div class="ai-panel" style="padding:10px 14px;margin-bottom:12px"><b>${t('Parent notified the school today')}</b><div class="small">${esc(t((PICKUP_KINDS.find((k) => k[0] === p.kind) || [, p.kind])[1]))} · ${pickupText(p)}${p.note ? ' · “' + esc(p.note) + '”' : ''}</div></div>` : '';
+    f.elements.pickup_request_id.value = p ? p.id : '';
+    if (p && p.kind === 'collector') {
+      f.elements.collector_name.value = p.collector_name; f.elements.collector_phone.value = p.collector_phone;
+      f.elements.collector_relation.value = guessRelation(p.collector_relation);
+    }
+    if (LANG !== 'en') translateNode($('#elpre', f));
+  };
+}
+
+PAGES.earlyleave = async (el) => {
+  el.innerHTML = `<form class="card card-b row" id="elf">
+      <div class="field" style="margin:0"><label>From</label><input class="input" type="date" name="from" value="${addDays(-30)}"></div>
+      <div class="field" style="margin:0"><label>To</label><input class="input" type="date" name="to" value="${todayStr()}"></div>
+      <div class="field" style="margin:0"><label>Reason</label><select class="input" name="reason"><option value="">All</option>${EARLY_REASONS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></div>
+      <button class="btn" style="align-self:flex-end">Apply</button><span class="spacer"></span>
+      <button type="button" class="btn" id="elcsv" style="align-self:flex-end">Export CSV</button>
+      <button type="button" class="btn primary" id="eladd" style="align-self:flex-end">${icon('plus')} Record early leave</button>
+    </form><div id="elsum" class="row mt"></div><div class="card mt" id="ell">${loading()}</div>`;
+  let data = { rows: [] };
+  const load = async () => {
+    const q = new URLSearchParams(readForm($('#elf', el))).toString();
+    data = await GET('/api/early-leaves?' + q);
+    const live = data.rows.filter((r) => !r.voided);
+    const counts = {}; live.forEach((r) => { counts[r.reason_type] = (counts[r.reason_type] || 0) + 1; });
+    $('#elsum', el).innerHTML = `<span class="badge blue">${t('Total')} ${live.length}</span>` + Object.entries(counts).map(([k, n]) => `<span class="badge">${esc(labelOf(EARLY_REASONS, k))} ${n}</span>`).join('');
+    $('#ell', el).innerHTML = table([
+      { label: 'When', render: (r) => `<b>${fmtDate(r.date)}</b><div class="muted small">${esc(r.time_out)}${r.returned_at ? ` → ${t('back')} ${esc(r.returned_at)}` : ''}</div>` },
+      { label: 'Student', render: (r) => `<b>${esc(r.student_name)}</b><div class="muted small">${esc(r.class_name || '')} · ${esc(r.admission_no)}</div>${r.term_count >= 3 ? `<span class="badge amber">${r.term_count} ${t('early leaves in 4 months')}</span>` : ''}` },
+      { label: 'Collected by', render: (r) => `<span data-noi18n>${esc(r.collector_name)}</span> <span class="muted small">(${esc(labelOf(RELATIONS, r.collector_relation))})</span><div class="muted small">NIC <span data-noi18n>${esc(r.collector_id_no)}</span>${r.collector_phone ? ' · ' + esc(r.collector_phone) : ''}</div>` },
+      { label: 'Reason', render: (r) => `<b>${esc(labelOf(EARLY_REASONS, r.reason_type))}</b><div class="small" data-noi18n style="max-width:320px">${esc(r.reason)}</div>` },
+      { label: 'Recorded by', render: (r) => `${esc(r.recorded_by_name || '')}${r.pickup_request_id ? `<div class="muted small">${t('Parent pre-notified')}</div>` : ''}` },
+      { label: 'Status', render: (r) => r.voided ? `${badge('rejected', 'Voided')}<div class="muted small" data-noi18n>${esc(r.void_reason)} – ${esc(r.voided_by_name || '')}</div>` : r.returned_at ? badge('present', 'Returned') : badge('late', 'Left early') },
+      { label: '', render: (r) => r.voided ? '' : `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end">${!r.returned_at && r.date === todayStr() ? `<button class="btn sm" data-ret="${r.id}">${icon('check')} Came back</button>` : ''}${data.can_void ? `<button class="btn sm danger" data-void="${r.id}" title="Void (entered in error)">${icon('x')}</button>` : ''}</div>` },
+    ], data.rows, 'No early leaves in this period.');
+    $$('[data-ret]', el).forEach((b) => b.onclick = () => POST(`/api/early-leaves/${b.dataset.ret}/return`).then(load).catch((e) => toast(e.message, 'error')));
+    $$('[data-void]', el).forEach((b) => b.onclick = () => modal({
+      title: 'Void this record', submit: 'Void record',
+      body: `<p class="muted small" style="margin-top:0">Only for records entered in error. The record stays in the register marked as voided.</p>` + field({ name: 'reason', label: 'Why is it being voided?', type: 'textarea', required: true, rows: 2 }),
+      onSubmit: async (v) => { await POST(`/api/early-leaves/${b.dataset.void}/void`, v); toast(t('Record voided'), 'success'); load(); },
+    }));
+  };
+  $('#elf', el).addEventListener('submit', (e) => { e.preventDefault(); load().catch((err) => toast(err.message, 'error')); });
+  $('#eladd', el).onclick = () => recordEarlyLeave(load);
+  $('#elcsv', el).onclick = () => {
+    const cols = ['date', 'time_out', 'returned_at', 'student_name', 'admission_no', 'class_name', 'collector_name', 'collector_relation', 'collector_id_no', 'collector_phone', 'reason_type', 'reason', 'recorded_by_name', 'voided', 'void_reason'];
+    const csv = [cols.join(','), ...data.rows.map((r) => cols.map((c) => `"${String(r[c] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `early-leave-register-${todayStr()}.csv`; a.click();
+  };
+  await load();
 };

@@ -278,6 +278,28 @@ CREATE TABLE IF NOT EXISTS progress_summaries(
 	text TEXT NOT NULL,
 	PRIMARY KEY(student_id, language, date)
 );
+CREATE TABLE IF NOT EXISTS early_leaves(
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+	date TEXT NOT NULL,
+	time_out TEXT NOT NULL,
+	collector_name TEXT NOT NULL,
+	collector_relation TEXT NOT NULL,
+	collector_id_no TEXT NOT NULL,
+	collector_phone TEXT NOT NULL DEFAULT '',
+	reason_type TEXT NOT NULL,
+	reason TEXT NOT NULL,
+	recorded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+	pickup_request_id INTEGER,
+	returned_at TEXT NOT NULL DEFAULT '',
+	voided INTEGER NOT NULL DEFAULT 0,
+	void_reason TEXT NOT NULL DEFAULT '',
+	voided_by INTEGER,
+	voided_at TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_early_date ON early_leaves(date);
+CREATE INDEX IF NOT EXISTS idx_early_student ON early_leaves(student_id);
 CREATE INDEX IF NOT EXISTS idx_pickup_date ON pickup_requests(date, status);
 CREATE INDEX IF NOT EXISTS idx_tt_teacher ON timetable(teacher_id, day, period);
 CREATE INDEX IF NOT EXISTS idx_staff_att ON staff_attendance(date);

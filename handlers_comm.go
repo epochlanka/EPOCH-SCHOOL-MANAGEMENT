@@ -394,13 +394,15 @@ func (a *App) handlePortal(w http.ResponseWriter, r *http.Request, u *User) {
 		(SELECT sb.name FROM substitutions x JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? AND x.class_id=t.class_id AND x.period=t.period AND t.day=?) AS relief_teacher
 		FROM timetable t JOIN subjects s ON s.id=t.subject_id LEFT JOIN users u ON u.id=t.teacher_id WHERE t.class_id=? ORDER BY t.day, t.period`,
 		t, cfg.schoolDay(t), classID)
+	earlyLeaves, _ := a.queryMaps(`SELECT e.date, e.time_out, e.collector_name, e.collector_relation, e.reason_type, e.reason, e.returned_at, r.name AS recorded_by_name
+		FROM early_leaves e LEFT JOIN users r ON r.id=e.recorded_by WHERE e.student_id=? AND e.voided=0 ORDER BY e.date DESC, e.time_out DESC LIMIT 20`, sid)
 	loans, _ := a.queryMaps(`SELECT b.title, l.due_date, CASE WHEN l.due_date<? THEN 1 ELSE 0 END AS overdue FROM loans l JOIN books b ON b.id=l.book_id
 		WHERE l.student_id=? AND l.returned_at=''`, t, sid)
 
 	writeJSON(w, 200, map[string]any{
 		"student": student, "today_status": todayStatus, "attendance": attendance, "attendance_stats": stats,
 		"fees": fees, "homework": homework, "exams": exams, "results": results, "bus_updates": bus,
-		"notifications": notifications, "timetable": timetable, "timetable_config": cfg, "today_day": cfg.schoolDay(t), "loans": loans,
+		"notifications": notifications, "early_leaves": earlyLeaves, "timetable": timetable, "timetable_config": cfg, "today_day": cfg.schoolDay(t), "loans": loans,
 	})
 }
 
