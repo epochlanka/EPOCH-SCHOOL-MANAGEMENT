@@ -533,21 +533,3 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request, u *User)
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
-
-func (a *App) handleTestMessage(w http.ResponseWriter, r *http.Request, u *User) {
-	var req struct {
-		Channel string `json:"channel"`
-		To      string `json:"to"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		errJSON(w, 400, err.Error())
-		return
-	}
-	text := fmt.Sprintf("Test message from %s via Epoch School System.", a.setting("school_name"))
-	status, err := a.notify.sendDirect(r.Context(), req.Channel, req.To, text)
-	if err != nil {
-		errJSON(w, 502, "Send failed: "+err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]string{"status": status})
-}

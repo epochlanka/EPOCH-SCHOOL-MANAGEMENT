@@ -1,7 +1,7 @@
 # Epoch School Connect
 
 School communication and management system by **Epoch** (Gongawela Bus Station Complex, Matale · 076 843 7970).
-It sends parents WhatsApp, SMS and in-app notifications, runs the day-to-day school records behind them, and has a built-in AI assistant powered by Claude.
+It sends parents, students and staff in-app notifications, runs the day-to-day school records behind them, and has a built-in AI assistant powered by Claude.
 
 It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in SQLite, and nothing else needs to be installed.
 
@@ -9,7 +9,7 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 
 | Area | What it does |
 |---|---|
-| **Communication** | Announcements and circulars to everyone, all parents, staff, a class, a bus route or one person, over App, SMS and WhatsApp, with live previews and SMS part counting |
+| **Communication** | Announcements and circulars to everyone, all parents, staff, a class, a bus route or one person, as in-app notifications with a live preview |
 | **Automated alerts** | Absent and late alerts (optional "present" messages), daily fee reminders and overdue notices, payment receipts, homework, exam notices, published results and bus updates. You choose the channels for each alert type in Settings |
 | **Two-way messaging** | Parents can chat with teachers and admins. Parents can't message other parents |
 | **Attendance** | Mark a class in one click, plus range reports with attendance percentages |
@@ -31,14 +31,14 @@ It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in S
 ## Languages: English, සිංහල, தமிழ்
 
 - **Screens:** every screen can be switched between English, Sinhala and Tamil, from the sign-in page, the staff top bar, or Profile in the parent app. The choice is saved to the person's account, so it follows them to any device.
-- **Messages:** each person's language also decides how their WhatsApp, SMS and app messages arrive. Attendance, fee, homework, exam, result, bus, leave, relief-duty, welcome and library messages are all sent in each person's own language automatically.
+- **Messages:** each person's language also decides which language their app notifications arrive in. Attendance, fee, homework, exam, result, bus, leave, relief-duty, welcome and library messages are all sent in each person's own language automatically.
 - **Announcements:** when Epoch AI is enabled, tick **Translate for each recipient** and every parent gets the announcement in their own language.
 - **Setting a parent's language:** set it when adding them (Users & Roles, or "Parent's language" when adding a student). Parents can also change it themselves in the app.
 - **Correcting translations:** screen text is in `web/js/i18n.js` and message text in `i18n.go`. Have a native speaker review both before launch. Untranslated text falls back to English.
 
 ## Pickup changes & progress reports
 
-- **Pickup changes:** in the app, parents tell the school when someone else is collecting their child (with that person's name, relationship and phone), when the child isn't taking the bus, or when they'll collect early. The class teacher, head of section, front office and principal are notified at once. Staff see the day's list on **Pickup Changes** (with a badge for ones waiting), confirm or decline, and the parent gets the reply by app and WhatsApp in their own language.
+- **Pickup changes:** in the app, parents tell the school when someone else is collecting their child (with that person's name, relationship and phone), when the child isn't taking the bus, or when they'll collect early. The class teacher, head of section, front office and principal are notified at once. Staff see the day's list on **Pickup Changes** (with a badge for ones waiting), confirm or decline, and the parent gets the reply in the app, in their own language.
 - **Progress reports:** each child gets a plain-language report covering:
   - attendance for the last 30 days compared with the 30 before
   - each subject against the class average and the child's previous result
@@ -103,21 +103,9 @@ All settings are environment variables (or a `.env` file). See [.env.example](.e
 Set `ANTHROPIC_API_KEY` to enable Epoch AI. The default model is `claude-opus-5-5` (change it with `AI_MODEL`).
 Requests opt into Anthropic's server-side refusal fallback (`fallbacks: "default"`), so a falsely declined request is retried on a fallback model instead of failing.
 
-### SMS providers (`SMS_PROVIDER`)
+### Notifications
 
-- `log` (default): simulation mode. Messages are only logged and recorded as *simulated*.
-- `notifylk`: [Notify.lk](https://notify.lk) for Sri Lankan numbers.
-- `twilio`: Twilio Programmable SMS.
-- `webhook`: POSTs `{"to","message"}` JSON to any gateway, e.g. Dialog, Mobitel or your own relay.
-
-### WhatsApp providers (`WHATSAPP_PROVIDER`)
-
-- `log` (default): simulation mode.
-- `meta`: WhatsApp Business Cloud API. WhatsApp only allows business-initiated messages through an **approved template**. Create a template with a single `{{1}}` body variable and set `WHATSAPP_TEMPLATE`.
-- `twilio`: Twilio WhatsApp sender.
-
-Local numbers such as `077 123 4567` become `94771234567` automatically (`DEFAULT_COUNTRY_CODE`).
-In Settings, use **Send test** to check a provider.
+The system sends **in-app notifications only**: every alert, reminder, announcement and reply appears in the app (bell icon for staff, Notices in the parent app). SMS and WhatsApp sending is switched off in `notify.go` (`validChannels`), and the old provider code is kept but unused. The `SMS_*`, `WHATSAPP_*`, `WAAPI_*` and `TWILIO_*` settings in `.env` are ignored.
 
 ## Database & backups
 
@@ -154,7 +142,7 @@ auth.go              login, sessions, roles, profile
 handlers_admin.go    dashboard, users, classes, routes, students, settings
 handlers_academic.go attendance, fees and reminders, homework, exams and results
 handlers_comm.go     announcements, notifications, messaging, reports, portal, scheduler
-notify.go            notification engine and SMS/WhatsApp providers
+notify.go            notification engine (in-app only)
 ai.go                Claude integration (compose, translate, reply, tool-using assistant)
 roles.go             roles, permissions and per-class scoping
 timetable.go         subjects, allocation, timetable generator, sections

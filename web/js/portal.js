@@ -127,9 +127,9 @@ PV.ai = (el) => {
 
 PV.profile = (el) => {
   el.innerHTML = `<div class="card card-b row"><div class="avatar" style="width:54px;height:54px;font-size:19px">${esc(initials(S.me.name))}</div><div><b style="font-size:17px">${esc(S.me.name)}</b><div class="muted small">${esc(S.me.email)} · ${cap(S.me.role)}</div></div></div>
-  <div class="card card-b"><h3 style="margin-bottom:12px">Language</h3>${langPicker('wide')}<p class="muted small" style="margin:10px 0 0">The app and your WhatsApp, SMS and app messages will be in this language.</p></div>
+  <div class="card card-b"><h3 style="margin-bottom:12px">Language</h3>${langPicker('wide')}<p class="muted small" style="margin:10px 0 0">The app and your notifications will be in this language.</p></div>
   <form class="card card-b" id="pf"><h3 style="margin-bottom:12px">Contact details</h3>
-    ${field({ name: 'phone', label: 'Mobile (SMS)', value: S.me.phone })}${field({ name: 'whatsapp', label: 'WhatsApp number', value: S.me.whatsapp })}
+    ${field({ name: 'phone', label: 'Mobile', value: S.me.phone })}
     ${field({ name: 'language', label: 'Preferred language', type: 'select', options: ['English', 'Sinhala', 'Tamil'], value: S.me.language })}
     <button class="btn primary">Save</button></form>
   <form class="card card-b" id="pw"><h3 style="margin-bottom:12px">Change password</h3>

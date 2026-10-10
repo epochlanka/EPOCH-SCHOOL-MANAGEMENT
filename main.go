@@ -116,7 +116,7 @@ func serve(ctx context.Context, cfg Config, store *storage) (*dbChange, error) {
 
 	log.Printf("Epoch School System running on http://localhost%s", displayAddr(cfg.Addr))
 	log.Printf("Database: %s (%s)", dbPath, source)
-	log.Printf("SMS provider: %s | WhatsApp provider: %s | AI: %s", app.notify.sms.Name(), app.notify.wa.Name(), app.ai.statusText())
+	log.Printf("Notifications: in-app only | AI: %s", app.ai.statusText())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return nil, err
 	}
@@ -177,7 +177,6 @@ func (a *App) routes() http.Handler {
 	h("DELETE /api/students/{id}", PStudentsEdit, a.handleDeleteStudent)
 	h("GET /api/settings", anyone, a.handleGetSettings)
 	h("PUT /api/settings", PSettings, a.handlePutSettings)
-	h("POST /api/settings/test-message", PSettings, a.handleTestMessage)
 	h("GET /api/system/storage", PSettings, a.handleGetStorage)
 	h("PUT /api/system/storage", PSettings, a.handlePutStorage)
 	h("POST /api/system/backup", PSettings, a.handleBackupNow)

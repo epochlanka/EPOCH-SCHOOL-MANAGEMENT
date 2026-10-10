@@ -16,7 +16,9 @@ import (
 	"time"
 )
 
-var validChannels = []string{"app", "sms", "whatsapp"}
+// The system sends in-app notifications only. Any other channel (SMS, WhatsApp)
+// requested anywhere is dropped here; the provider code below is kept but unused.
+var validChannels = []string{"app"}
 
 func cleanChannels(s string) string {
 	var out []string
@@ -163,6 +165,7 @@ func (n *Notifier) channelsFor(category string) []string {
 // notification is stored immediately; SMS and WhatsApp are queued for the workers.
 // It returns the number of distinct recipients.
 func (n *Notifier) Notify(category, title, body string, userIDs []int64, channels []string) (int, error) {
+	channels = []string{"app"} // in-app notifications only
 	seen := map[int64]bool{}
 	var ids []int64
 	for _, id := range userIDs {

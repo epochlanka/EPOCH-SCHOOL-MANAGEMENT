@@ -84,7 +84,6 @@ function profileModal() {
     title: 'My profile', submit: 'Save',
     body: formFields([
       { name: 'phone', label: 'Mobile number', value: S.me.phone },
-      { name: 'whatsapp', label: 'WhatsApp number', value: S.me.whatsapp },
       { name: 'language', label: 'Preferred language', type: 'select', options: ['English', 'Sinhala', 'Tamil'], value: S.me.language },
     ]) + `<hr style="border:0;border-top:1px solid var(--border);margin:6px 0 16px"><h4 style="margin-bottom:10px">Change password</h4>` + formFields([
       { name: 'current', label: 'Current password', type: 'password', autocomplete: 'current-password' },
@@ -92,7 +91,7 @@ function profileModal() {
     ]),
     onSubmit: async (v) => {
       await PUT('/api/me', v);
-      Object.assign(S.me, { phone: v.phone, whatsapp: v.whatsapp, language: v.language });
+      Object.assign(S.me, { phone: v.phone, language: v.language });
       if (v.new) await POST('/api/me/password', { current: v.current, new: v.new });
       toast(t('Profile updated'), 'success');
       if (LANG_CODES[v.language] !== LANG) setLang(LANG_CODES[v.language], false);
@@ -105,9 +104,8 @@ PAGES.dashboard = async (el) => {
   const d = await GET('/api/dashboard');
   const a = d.attendance, marked = a.present + a.absent + a.late;
   const pct = marked ? Math.round(((a.present + a.late) * 100) / marked) : 0;
-  const ch = { app: 0, sms: 0, whatsapp: 0 }, failed = { app: 0, sms: 0, whatsapp: 0 };
-  d.channels.forEach((c) => { ch[c.channel] = (ch[c.channel] || 0) + c.n; if (c.status === 'failed') failed[c.channel] += c.n; });
-  const chMax = Math.max(1, ...Object.values(ch));
+  const ch = { app: 0 };
+  d.channels.forEach((c) => { if (c.channel === 'app') ch.app += c.n; });
   const deg = (v) => (marked ? (v / marked) * 360 : 0);
   el.innerHTML = `<div class="stack">
     <div class="grid g-4">
@@ -150,8 +148,9 @@ PAGES.dashboard = async (el) => {
         </div></div>
     </div>
     <div class="grid g-3">
-      <div class="card"><div class="card-h"><h3>Channels</h3><span class="muted small">last 30 days</span></div><div class="card-b">
-        ${['whatsapp', 'sms', 'app'].map((c) => `<div class="hbar"><span>${chBadge(c)}</span><div class="track"><div class="fill" style="width:${(ch[c] / chMax) * 100}%;background:${CH[c].color}"></div></div><b class="num">${num(ch[c])}</b></div>${failed[c] ? `<div class="small" style="color:var(--danger);margin:-4px 0 6px 120px">${failed[c]} failed</div>` : ''}`).join('')}
+      <div class="card"><div class="card-h"><h3>App notifications</h3><span class="muted small">last 30 days</span></div><div class="card-b">
+        <div class="row" style="flex-wrap:nowrap"><div class="ic tint-blue" style="width:46px;height:46px;border-radius:12px;display:grid;place-items:center">${icon('bell')}</div>
+        <div><div style="font-size:28px;font-weight:800">${num(ch.app)}</div><div class="muted small">sent to parents, students and staff</div></div></div>
         <a class="btn sm mt" href="#/reports">View delivery report</a>
       </div></div>
       <div class="card"><div class="card-h"><h3>Absent & late today</h3></div>
@@ -163,7 +162,7 @@ PAGES.dashboard = async (el) => {
     </div>
     <div class="card"><div class="card-h"><h3>Recent communication</h3><span class="spacer"></span><a class="btn sm" href="#/reports">All history</a></div>
       ${table([
-        { label: 'Channel', render: (r) => chBadge(r.channel) }, { label: 'Recipient', key: 'user_name' },
+        { label: 'Recipient', key: 'user_name' },
         { label: 'Message', render: (r) => `<b>${esc(r.title)}</b>` }, { label: 'Category', render: (r) => esc(cap(r.category)) },
         { label: 'Status', render: (r) => badge(r.status) }, { label: 'When', render: (r) => `<span class="muted">${ago(r.created_at)}</span>` },
       ], d.recent, 'No messages sent yet.')}
@@ -190,7 +189,7 @@ PAGES.compose = async (el) => {
   const [users, history, sections] = await Promise.all([GET('/api/users'), GET('/api/announcements'), GET('/api/sections')]);
   el.innerHTML = `<div class="grid g-main">
     <div class="stack">
-      ${S.aiEnabled ? `<div class="ai-panel"><div class="row" style="margin-bottom:10px"><div class="ai-bot">${icon('sparkle')}</div><div><b>Write with Epoch AI</b><div class="muted small">Describe the message — AI drafts the title, full message and SMS version.</div></div></div>
+      ${S.aiEnabled ? `<div class="ai-panel"><div class="row" style="margin-bottom:10px"><div class="ai-bot">${icon('sparkle')}</div><div><b>Write with Epoch AI</b><div class="muted small">Describe the message — AI drafts the title and the full message.</div></div></div>
         <form id="aiForm"><div class="field"><textarea class="input" name="prompt" rows="2" placeholder="e.g. School closed on Friday for the annual sports meet, parents invited at 2pm"></textarea></div>
         <div class="row"><select class="input" name="tone" style="width:auto"><option>warm and professional</option><option>formal</option><option>urgent</option><option>celebratory</option><option>gentle reminder</option></select>
         <select class="input" name="language" style="width:auto"><option>English</option><option>Sinhala</option><option>Tamil</option><option value="English, followed by a Sinhala and a Tamil translation">Trilingual (EN/SI/TA)</option></select>
@@ -204,8 +203,6 @@ PAGES.compose = async (el) => {
           ${field({ name: 'body', label: 'Message', type: 'textarea', required: true, full: true, rows: 6 })}
         </div>
         <div class="row" style="margin:-6px 0 14px">${S.aiEnabled ? ['Sinhala', 'Tamil', 'English'].map((l) => `<button type="button" class="btn sm" data-tr="${l}">${icon('translate')} ${l}</button>`).join('') : ''}<span class="muted small right" id="charCount"></span></div>
-        <label style="font-weight:600;font-size:13px">Channels</label>
-        <div class="channel-pick mt">${['app', 'sms', 'whatsapp'].map((c) => `<label><input type="checkbox" name="ch_${c}" value="${c}" data-group="channels" ${c !== 'sms' ? 'checked' : ''}><span class="ch-ic" style="background:${CH[c].color}">${icon(CH[c].icon)}</span>${CH[c].label}</label>`).join('')}</div>
         <div class="ai-panel mt" style="padding:12px 14px">${S.aiEnabled ? `<div class="row"><label class="check"><input type="checkbox" name="translate" checked> Translate for each recipient</label>
           <span class="spacer"></span><span class="muted small">Written in</span><select class="input" name="language" style="width:auto">${['English', 'Sinhala', 'Tamil'].map((l) => `<option value="${l}" ${LANG_NAMES[LANG] === l ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
           <p class="muted small" style="margin:6px 0 0">Each parent gets the message in their own language (Sinhala, Tamil or English) using Epoch AI.</p>`
@@ -216,8 +213,6 @@ PAGES.compose = async (el) => {
     <div class="stack">
       <div class="card"><div class="card-h"><h3>Preview</h3></div><div class="card-b stack" style="gap:14px">
         <div><div class="muted small" style="margin-bottom:6px">${chBadge('app')} App notification</div><div class="list-item card" style="border-radius:12px;padding:12px">${catIcon('announcement')}<div class="grow"><div class="t1" id="pvTitle">Title</div><div class="t2" id="pvBody">Your message…</div></div><span class="muted small">now</span></div></div>
-        <div><div class="muted small" style="margin-bottom:6px">${chBadge('whatsapp')} WhatsApp</div><div class="preview-phone"><div class="wa-bubble" id="pvWa"></div></div></div>
-        <div><div class="muted small" style="margin-bottom:6px">${chBadge('sms')} SMS <span id="smsParts"></span></div><div class="preview-phone"><div class="sms-bubble" id="pvSms"></div></div></div>
       </div></div>
     </div>
   </div>
@@ -225,7 +220,6 @@ PAGES.compose = async (el) => {
     ${table([
       { label: 'Title', render: (r) => `<b>${esc(r.title)}</b><div class="muted small" style="max-width:420px">${esc(r.body.slice(0, 120))}${r.body.length > 120 ? '…' : ''}</div>` },
       { label: 'Audience', render: (r) => esc(cap(r.audience) + (r.audience_label ? ': ' + r.audience_label : '')) },
-      { label: 'Channels', render: (r) => r.channels.split(',').map(chBadge).join(' ') },
       { label: 'Recipients', key: 'recipients', num: true }, { label: 'By', key: 'created_by_name' },
       { label: 'Sent', render: (r) => `<span class="muted">${ago(r.created_at)}</span>` },
     ], history, 'No announcements sent yet.')}
@@ -246,10 +240,6 @@ PAGES.compose = async (el) => {
   const preview = () => {
     const t = form.elements.title.value || 'Title', b = form.elements.body.value || 'Your message…';
     $('#pvTitle', el).textContent = t; $('#pvBody', el).textContent = b;
-    const full = `${t}\n${b}\n- ${S.school.name}`;
-    $('#pvWa', el).textContent = full; $('#pvSms', el).textContent = full;
-    const len = full.length, unicode = /[^\x00-\x7F]/.test(full), per = unicode ? 70 : 160;
-    $('#smsParts', el).textContent = `· ${len} chars · ${Math.ceil(len / per)} SMS part(s)${unicode ? ' (Unicode)' : ''}`;
     $('#charCount', el).textContent = `${form.elements.body.value.length} characters`;
   };
   form.addEventListener('input', preview); preview(); aud.onchange();
@@ -272,8 +262,8 @@ PAGES.compose = async (el) => {
     try {
       const r = await POST('/api/ai/compose', { ...v, audience: aud.options[aud.selectedIndex].text, draft: v.prompt ? '' : form.elements.body.value });
       form.elements.title.value = r.title;
-      form.elements.body.value = form.elements.ch_sms.checked && !form.elements.ch_whatsapp.checked && !form.elements.ch_app.checked ? r.sms : r.message;
-      form.dataset.sms = r.sms; preview(); toast('Draft ready — review and send', 'success');
+      form.elements.body.value = r.message;
+      preview(); toast('Draft ready — review and send', 'success');
     } catch (err) { toast(err.message, 'error'); } finally { btn.disabled = false; btn.innerHTML = `${icon('sparkle')} Generate`; }
   });
 
@@ -281,10 +271,9 @@ PAGES.compose = async (el) => {
     e.preventDefault();
     const v = readForm(form);
     if (!v.title || !v.body) return toast('Title and message are required', 'error');
-    if (!v.channels.length) return toast('Choose at least one channel', 'error');
     const btn = $('button[type=submit]', form); btn.disabled = true;
     try {
-      const r = await POST('/api/announcements', { title: v.title, body: v.body, audience: v.audience, audience_id: Number(v.audience_id || 0), channels: v.channels, category: v.category, translate: !!v.translate, language: v.language || 'English' });
+      const r = await POST('/api/announcements', { title: v.title, body: v.body, audience: v.audience, audience_id: Number(v.audience_id || 0), channels: ['app'], category: v.category, translate: !!v.translate, language: v.language || 'English' });
       toast(`${t('Sent')}: ${r.recipients} · ${r.languages.map((l) => t(l)).join(', ')}${r.translation_failed ? ' · translation failed for ' + r.translation_failed + ' language(s), original sent' : ''}`, r.translation_failed ? '' : 'success');
       PAGES.compose(el);
     } catch (err) { toast(err.message, 'error'); btn.disabled = false; }
@@ -295,14 +284,13 @@ PAGES.compose = async (el) => {
 PAGES.messages = async (el) => { await messenger(el, location.hash.split('/')[2]); };
 PAGES.ai = async (el) => {
   if (!S.aiEnabled) { el.innerHTML = `<div class="card empty"><div class="ai-bot" style="margin:0 auto 12px">${icon('sparkle')}</div><b>Epoch AI is not enabled yet</b><p>Add <code>ANTHROPIC_API_KEY=…</code> to the <code>.env</code> file on the server and restart it.</p></div>`; return; }
-  aiChat(el, ['Give me a summary of the school today', 'Which students were absent today?', 'List overdue fees and suggest a reminder message', 'How did the last exams go?', 'Which students have attendance below 85%?', 'How many WhatsApp messages did we send this week?']);
+  aiChat(el, ['Give me a summary of the school today', 'Which students were absent today?', 'List overdue fees and suggest a reminder message', 'How did the last exams go?', 'Which students have attendance below 85%?', 'How many notifications did we send this week?']);
 };
 
 /* ---------- Reports ---------- */
 PAGES.reports = async (el) => {
   el.innerHTML = `<form class="card card-b row" id="rf">
     ${['from', 'to'].map((n) => `<div class="field" style="margin:0"><label>${cap(n)}</label><input class="input" type="date" name="${n}" value="${n === 'from' ? addDays(-30) : todayStr()}"></div>`).join('')}
-    <div class="field" style="margin:0"><label>Channel</label><select class="input" name="channel"><option value="">All</option><option value="app">App</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select></div>
     <div class="field" style="margin:0"><label>Category</label><select class="input" name="category"><option value="">All</option>${Object.keys(CAT).map((c) => `<option value="${c}">${cap(c)}</option>`).join('')}</select></div>
     <div class="field" style="margin:0"><label>Status</label><select class="input" name="status"><option value="">All</option>${['delivered', 'sent', 'simulated', 'queued', 'failed', 'skipped'].map((c) => `<option value="${c}">${cap(c)}</option>`).join('')}</select></div>
     <button class="btn primary" style="align-self:flex-end">Apply</button>
@@ -317,14 +305,14 @@ PAGES.reports = async (el) => {
     const catMax = Math.max(1, ...d.by_category.map((c) => c.n));
     const dayMax = Math.max(1, ...d.by_day.map((c) => c.n));
     $('#rout', el).innerHTML = `<div class="stack">
-      <div class="grid g-3">${['whatsapp', 'sms', 'app'].map((c) => { const t = tot[c] || { all: 0, ok: 0, failed: 0 }; return `<div class="card stat"><div class="ch-ic" style="background:${CH[c].color};width:46px;height:46px;border-radius:12px">${icon(CH[c].icon)}</div><div><div class="l">${CH[c].label}</div><div class="v">${num(t.all)}</div><div class="muted small">${num(t.ok)} delivered · <span style="color:${t.failed ? 'var(--danger)' : 'inherit'}">${num(t.failed)} failed</span></div></div></div>`; }).join('')}</div>
+      ${(() => { const a = tot.app || { all: 0 }; return `<div class="card stat"><div class="ic tint-blue">${icon('bell')}</div><div><div class="l">App notifications</div><div class="v">${num(a.all)}</div><div class="muted small">in this period</div></div></div>`; })()}
       <div class="grid g-2">
         <div class="card"><div class="card-h"><h3>By category</h3></div><div class="card-b">${d.by_category.map((c) => `<div class="hbar"><span>${esc(cap(c.category))}</span><div class="track"><div class="fill" style="width:${(c.n / catMax) * 100}%;background:var(--brand)"></div></div><b class="num">${num(c.n)}</b></div>`).join('') || '<div class="empty">No data</div>'}</div></div>
         <div class="card"><div class="card-h"><h3>Daily volume</h3></div><div class="card-b"><div class="bars">${d.by_day.slice(-14).map((x) => `<div class="b"><em>${x.n}</em><i style="height:${(x.n / dayMax) * 120 + 3}px"></i><span>${esc(x.day.slice(5))}</span></div>`).join('') || '<div class="empty">No data</div>'}</div></div></div>
       </div>
       <div class="card"><div class="card-h"><h3>Delivery log</h3><span class="muted small">${d.rows.length} most recent</span></div>
       ${table([
-        { label: 'When', render: (r) => `<span class="muted small">${esc(r.created_at)}</span>` }, { label: 'Channel', render: (r) => chBadge(r.channel) },
+        { label: 'When', render: (r) => `<span class="muted small">${esc(r.created_at)}</span>` }, 
         { label: 'Recipient', render: (r) => `${esc(r.user_name || '—')}<div class="muted small">${esc(r.recipient)}</div>` },
         { label: 'Message', render: (r) => `<b>${esc(r.title)}</b>` }, { label: 'Category', render: (r) => esc(cap(r.category)) },
         { label: 'Status', render: (r) => badge(r.status) + (r.error ? `<div class="small" style="color:var(--danger);max-width:240px">${esc(r.error)}</div>` : '') },
@@ -443,7 +431,7 @@ PAGES.students = async (el) => {
         { name: 'route_id', label: 'Bus route', type: 'select', options: [[0, 'No bus'], ...S.routes.map((r) => [r.id, r.name])] },
         { name: 'parent_id', label: 'Parent account', type: 'select', full: true, options: [[0, '➕ Create a new parent account below'], ...parents.map((p) => [p.id, `${p.name} · ${p.email}`])] },
       ], s) + `<div id="newParent" class="form-grid" style="${s.parent_id ? 'display:none' : ''}">
-        ${field({ name: 'parent_name', label: 'Parent name' })}${field({ name: 'parent_phone', label: 'Parent mobile (WhatsApp)', placeholder: '07X XXX XXXX' })}
+        ${field({ name: 'parent_name', label: 'Parent name' })}${field({ name: 'parent_phone', label: 'Parent mobile', placeholder: '07X XXX XXXX' })}
         ${field({ name: 'parent_email', label: 'Parent login email' })}${field({ name: 'parent_password', label: 'Parent password', hint: 'Share this with the parent so they can sign in to the app.' })}
         ${field({ name: 'parent_language', label: "Parent's language", type: 'select', options: ['English', 'Sinhala', 'Tamil'] })}
       </div>`,
@@ -498,7 +486,7 @@ PAGES.fees = async (el) => {
       { name: 'title', label: 'Fee title', required: true, placeholder: 'Term 3 Facility Fee', full: true },
       { name: 'amount', label: 'Amount (Rs.)', type: 'number', required: true, min: 1, step: '0.01' },
       { name: 'due_date', label: 'Due date', type: 'date', required: true, value: addDays(14) },
-      { name: 'notify', label: 'Notify parents now (uses Fee channels from Settings)', type: 'checkbox', value: true, full: true },
+      { name: 'notify', label: 'Notify parents in the app now', type: 'checkbox', value: true, full: true },
     ]),
     submit: 'Issue fee',
     onSubmit: async (v) => { const res = await POST('/api/fees', { ...v, class_id: Number(v.class_id) }); toast(`Issued to ${res.created} student(s), ${res.notified} parent(s) notified`, 'success'); load(); },
@@ -643,7 +631,7 @@ PAGES.users = async (el) => {
       { name: 'name', label: 'Full name', required: true }, { name: 'email', label: 'Login email', type: 'email', required: true },
       { name: 'role', label: 'Role', type: 'select', options: roleOpts(), value: u.role || 'class_teacher' },
       { name: 'language', label: 'Language', type: 'select', options: ['English', 'Sinhala', 'Tamil'] },
-      { name: 'phone', label: 'Mobile', placeholder: '07X XXX XXXX' }, { name: 'whatsapp', label: 'WhatsApp', placeholder: 'Same as mobile if empty' },
+      { name: 'phone', label: 'Mobile', placeholder: '07X XXX XXXX' },
       { name: 'password', label: u.id ? 'New password (leave blank to keep)' : 'Password', type: 'text', required: !u.id },
       ...(u.id ? [{ name: 'active', label: 'Account active', type: 'checkbox', value: !!u.active }] : []),
     ], u) + `<div class="muted small" id="roleHelp"></div>`,
@@ -718,16 +706,13 @@ PAGES.settings = async (el) => {
         { name: 'school_name', label: 'School name', full: true }, { name: 'school_phone', label: 'Phone' }, { name: 'school_email', label: 'Email' },
         { name: 'school_address', label: 'Address', full: true }], s)}</div></div>
       <div class="card"><div class="card-h"><h3>Integrations</h3></div><div class="card-b">
-        <div class="list-item" style="padding:8px 0">${catIcon('message')}<div class="grow"><div class="t1">SMS</div><div class="t2">${esc(s.providers.sms)}</div></div></div>
-        <div class="list-item" style="padding:8px 0"><div class="ic tint-green">${icon('whatsapp')}</div><div class="grow"><div class="t1">WhatsApp</div><div class="t2">${esc(s.providers.whatsapp)}</div></div></div>
+        <div class="list-item" style="padding:8px 0"><div class="ic tint-blue">${icon('bell')}</div><div class="grow"><div class="t1">Notifications</div><div class="t2">In-app notifications only</div></div></div>
         <div class="list-item" style="padding:8px 0"><div class="ic tint-violet">${icon('sparkle')}</div><div class="grow"><div class="t1">AI (Claude)</div><div class="t2">${esc(s.providers.ai)}</div></div></div>
-        <p class="muted small">Providers and API keys are configured in the server's <code>.env</code> file (see README). "Simulation" mode logs messages without sending them.</p>
-        <div class="row"><select class="input" id="tch" style="width:auto"><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select><input class="input" id="tto" placeholder="07X XXX XXXX" style="flex:1;min-width:140px"><button type="button" class="btn" id="tsend">Send test</button></div>
+        <p class="muted small">The AI key is configured in the server's <code>.env</code> file (see README).</p>
       </div></div>
     </div>
-    <div class="card"><div class="card-h"><h3>Automated notifications</h3><span class="muted small">Choose which channels each automatic alert uses</span></div>
-      ${table([{ label: 'Alert', render: (r) => `<b>${r[1]}</b>` }, ...['app', 'sms', 'whatsapp'].map((c) => ({ label: CH[c].label, render: (r) => `<input type="checkbox" style="width:18px;height:18px;accent-color:var(--brand)" data-group="channels_${r[0]}" name="c_${r[0]}_${c}" value="${c}" ${(s['channels_' + r[0]] || '').split(',').includes(c) ? 'checked' : ''}>` }))], cats)}
-      <div class="card-b form-grid" style="border-top:1px solid var(--border)">
+    <div class="card"><div class="card-h"><h3>Automated notifications</h3><span class="muted small">Sent as app notifications</span></div>
+      <div class="card-b form-grid">
         ${field({ name: 'notify_present', label: 'Also notify parents when a child is marked Present', type: 'checkbox', value: s.notify_present === '1', full: true })}
         ${field({ name: 'fee_reminder_days', label: 'Remind about fees due within (days)', type: 'number', min: 0, value: s.fee_reminder_days })}
         ${field({ name: 'fee_reminder_hour', label: 'Daily reminder time (hour, 0–23)', type: 'number', min: 0, value: s.fee_reminder_hour })}
@@ -746,15 +731,10 @@ PAGES.settings = async (el) => {
   </form>
   <div id="dbcard" class="stack" style="margin-top:18px"></div>`;
   renderStorage($('#dbcard', el));
-  $('#tsend', el).onclick = async () => {
-    try { const r = await POST('/api/settings/test-message', { channel: $('#tch', el).value, to: $('#tto', el).value }); toast('Test result: ' + r.status, 'success'); }
-    catch (e) { toast(e.message, 'error'); }
-  };
   $('#sf', el).addEventListener('submit', async (e) => {
     e.preventDefault();
     const v = readForm(e.target), body = {};
     ['school_name', 'school_phone', 'school_email', 'school_address'].forEach((k) => body[k] = v[k]);
-    cats.forEach(([c]) => body['channels_' + c] = (v['channels_' + c] || []).join(','));
     body.notify_present = v.notify_present ? '1' : '0';
     body.fee_reminder_days = String(v.fee_reminder_days ?? 3); body.fee_reminder_hour = String(v.fee_reminder_hour ?? 9);
     ['school_days', 'periods_per_day', 'day_start', 'period_minutes', 'break_after', 'break_minutes', 'staff_late_after'].forEach((k) => body[k] = String(v[k] ?? ''));

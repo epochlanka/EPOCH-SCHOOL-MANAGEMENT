@@ -21,10 +21,9 @@ function renderLogin() {
       <div class="hero-brand"><img src="assets/logo-mark.png" alt=""><div><b>EPOCH</b><div style="font-size:12px;color:#9fb2e3">Empowering possibilities through technology</div></div></div>
       <div>
         <h1>School <span>Communication</span><br>& Management</h1>
-        <p>Keep parents informed with WhatsApp, SMS and app notifications — attendance alerts, fee reminders, homework, exams, bus updates and more, with an AI assistant built in.</p>
+        <p>Keep parents informed with instant app notifications — attendance alerts, fee reminders, homework, exams, bus updates and more, with an AI assistant built in.</p>
         <div class="hero-chips">
-          <span class="hero-chip"><i style="background:#25d366"></i>WhatsApp</span><span class="hero-chip"><i style="background:#e0306a"></i>SMS</span>
-          <span class="hero-chip"><i style="background:#3b82f6"></i>App notifications</span><span class="hero-chip"><i style="background:#a78bfa"></i>AI assistant</span>
+                    <span class="hero-chip"><i style="background:#3b82f6"></i>App notifications</span><span class="hero-chip"><i style="background:#a78bfa"></i>AI assistant</span>
           <span class="hero-chip"><i style="background:#f59e0b"></i>Fee reminders</span><span class="hero-chip"><i style="background:#2dd4bf"></i>Bus updates</span>
         </div>
       </div>

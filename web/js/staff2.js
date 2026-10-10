@@ -315,7 +315,7 @@ PAGES.admissions = async (el) => {
       { label: 'Status', render: (r) => badge(r.status, (ADM.find((x) => x[0] === r.status) || [, r.status])[1]) + (r.admission_no ? `<div class="muted small">${esc(r.admission_no)}</div>` : '') },
       { label: 'Follow up', render: (r) => r.follow_up ? `<span style="color:${r.follow_up < todayStr() && r.status !== 'enrolled' ? 'var(--danger)' : 'inherit'}">${fmtDate(r.follow_up)}</span>` : '<span class="muted">—</span>' },
       { label: 'Notes', render: (r) => `<span class="small">${esc(r.notes)}</span>` },
-      { label: '', render: (r) => r.status === 'enrolled' ? '' : `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end">${r.phone ? `<a class="btn sm" href="https://wa.me/${esc(r.phone.replace(/\D/g, '').replace(/^0/, '94'))}" target="_blank" rel="noopener" title="WhatsApp">${icon('whatsapp')}</a>` : ''}<button class="btn sm" data-e="${r.id}">${icon('edit')}</button><button class="btn sm success" data-en="${r.id}">Enrol</button></div>` },
+      { label: '', render: (r) => r.status === 'enrolled' ? '' : `<div class="row" style="flex-wrap:nowrap;justify-content:flex-end"><button class="btn sm" data-e="${r.id}">${icon('edit')}</button><button class="btn sm success" data-en="${r.id}">Enrol</button></div>` },
     ], d.rows, 'No applications.');
     $$('[data-e]', el).forEach((b) => b.onclick = () => form(d.rows.find((r) => r.id == b.dataset.e)));
     $$('[data-en]', el).forEach((b) => b.onclick = () => enrol(d.rows.find((r) => r.id == b.dataset.en)));
@@ -325,7 +325,7 @@ PAGES.admissions = async (el) => {
     body: formFields([
       { name: 'child_name', label: 'Child name', required: true }, { name: 'grade_applying', label: 'Grade applying for', placeholder: 'Grade 1' },
       { name: 'dob', label: 'Date of birth', type: 'date' }, { name: 'gender', label: 'Gender', type: 'select', options: [['', '—'], ['M', 'Male'], ['F', 'Female']] },
-      { name: 'parent_name', label: 'Parent name', required: true }, { name: 'phone', label: 'Mobile / WhatsApp' },
+      { name: 'parent_name', label: 'Parent name', required: true }, { name: 'phone', label: 'Mobile' },
       { name: 'email', label: 'Email', type: 'email' }, { name: 'previous_school', label: 'Previous school' },
       { name: 'status', label: 'Status', type: 'select', options: ADM.filter((a) => a[0] !== 'enrolled') }, { name: 'follow_up', label: 'Follow-up date', type: 'date' },
       { name: 'notes', label: 'Notes', type: 'textarea', rows: 3, full: true },

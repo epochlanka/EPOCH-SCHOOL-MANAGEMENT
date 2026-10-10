@@ -140,9 +140,8 @@ var composeSchema = map[string]any{
 		"properties": map[string]any{
 			"title":   map[string]any{"type": "string", "description": "Short notification title, under 60 characters"},
 			"message": map[string]any{"type": "string", "description": "Full message for app and WhatsApp"},
-			"sms":     map[string]any{"type": "string", "description": "Condensed SMS version, under 300 characters"},
 		},
-		"required":             []string{"title", "message", "sms"},
+		"required":             []string{"title", "message"},
 		"additionalProperties": false,
 	},
 }
@@ -170,7 +169,7 @@ func (a *App) handleAICompose(w http.ResponseWriter, r *http.Request, u *User) {
 		req.Tone = "warm and professional"
 	}
 	system := `You write official communications from a school to parents, students and staff. ` + a.schoolContext() + `
-Write clear, respectful, concise messages suitable for WhatsApp, SMS and a mobile app notification.
+Write clear, respectful, concise messages suitable for a mobile app notification.
 Address parents as "Dear Parent" (or the local-language equivalent) unless the audience is staff or students.
 Never invent specific facts such as dates, times, amounts or names that the request does not give; if one is needed and missing, insert a clear placeholder like [DATE].
 Sign off with the school name. Write every field in the requested language, using its native script.`
@@ -186,10 +185,9 @@ Sign off with the school name. Write every field in the requested language, usin
 	var out struct {
 		Title   string `json:"title"`
 		Message string `json:"message"`
-		SMS     string `json:"sms"`
 	}
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		out.Title, out.Message, out.SMS = "Announcement", text, text
+		out.Title, out.Message = "Announcement", text
 	}
 	writeJSON(w, 200, out)
 }
