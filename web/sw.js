@@ -1,7 +1,7 @@
 /* Epoch School Connect service worker: makes the app installable and lets it open on a
    weak connection. App files come from the network first (so updates show at once) and
    are cached as a fallback. School data (/api/) is never cached. */
-const CACHE = 'epoch-app-v1';
+const CACHE = 'epoch-app-v2';
 const SHELL = [
   '/', '/index.html', '/manifest.json', '/css/app.css',
   '/js/i18n.js', '/js/ui.js', '/js/staff.js', '/js/staff2.js', '/js/portal.js', '/js/features.js', '/js/main.js', '/js/pwa.js',
@@ -29,4 +29,27 @@ self.addEventListener('fetch', (e) => {
       })
       .catch(() => caches.match(e.request).then((hit) => hit || (e.request.mode === 'navigate' ? caches.match('/index.html') : Response.error()))),
   );
+});
+
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data?.text() || '' }; }
+  const title = data.title || 'Epoch School';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: data.body || 'You have a new school update.',
+    icon: '/assets/icon-192.png',
+    badge: '/assets/icon-192.png',
+    tag: data.tag || 'epoch-school-update',
+    data: { url: data.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL(e.notification.data?.url || '/', self.location.origin).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    const openClient = clients.find((client) => client.url.startsWith(self.location.origin));
+    if (openClient) return openClient.focus().then(() => openClient.navigate(target));
+    return self.clients.openWindow(target);
+  }));
 });

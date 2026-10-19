@@ -78,6 +78,7 @@ async function refreshCounts() {
 async function boot() {
   try { applyMe(await GET('/api/me')); } catch { S.me = null; }
   route();
+  if (S.me && window.offerNotificationPermission) window.offerNotificationPermission();
 }
 
 window.addEventListener('hashchange', route);

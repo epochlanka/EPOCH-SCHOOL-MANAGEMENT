@@ -117,7 +117,19 @@ Requests opt into Anthropic's server-side refusal fallback (`fallbacks: "default
 
 ### Notifications
 
-The system sends **in-app notifications only**: every alert, reminder, announcement and reply appears in the app (bell icon for staff, Notices in the parent app). SMS and WhatsApp sending is switched off in `notify.go` (`validChannels`), and the old provider code is kept but unused. The `SMS_*`, `WHATSAPP_*`, `WAAPI_*` and `TWILIO_*` settings in `.env` are ignored.
+The system stores every alert, reminder, announcement and reply as an in-app notification. It can also send **Web Push notifications** to subscribed phones when the app is closed or in the background. SMS and WhatsApp sending is switched off in `notify.go` (`validChannels`), and the old provider code is kept but unused. The `SMS_*`, `WHATSAPP_*`, `WAAPI_*` and `TWILIO_*` settings in `.env` are ignored.
+
+### Phone push notifications
+
+Web Push requires the app to be served from an HTTPS address. A plain LAN address such as `http://192.168.x.x:8080` can open the app, but cannot register a service worker or subscribe to push on a phone. Use HTTPS on the deployed site (or a secure HTTPS tunnel for temporary testing).
+
+Generate a VAPID key pair once:
+
+```bash
+go run ./cmd/generate-vapid
+```
+
+Copy `WEBPUSH_PUBLIC_KEY` and `WEBPUSH_PRIVATE_KEY` into `.env`; keep the private key secret and stable across restarts. Set `WEBPUSH_SUBJECT` to a contact email address or an HTTPS URL, then restart the server. Each person must open the installed app over HTTPS, sign in, and allow notifications once on each phone. New alerts will then be sent to that person's subscribed devices. Existing notification subscriptions are removed automatically when the browser says they have expired.
 
 ## Database & backups
 

@@ -42,6 +42,10 @@ type Config struct {
 	WAAPIInstance  string // waapi.app instance ID
 
 	AIModel string
+
+	PushPublicKey  string
+	PushPrivateKey string
+	PushSubject    string
 }
 
 func env(key, def string) string {
@@ -85,6 +89,10 @@ func loadConfig() Config {
 		WAAPIInstance:  env("WAAPI_INSTANCE_ID", ""),
 
 		AIModel: env("AI_MODEL", "claude-opus-5-5"),
+
+		PushPublicKey:  env("WEBPUSH_PUBLIC_KEY", ""),
+		PushPrivateKey: env("WEBPUSH_PRIVATE_KEY", ""),
+		PushSubject:    env("WEBPUSH_SUBJECT", "epochadminlk@gmail.com"),
 	}
 }
 

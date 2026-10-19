@@ -17,9 +17,11 @@
     'Enable notifications': ['දැනුම්දීම් සක්‍රිය කරන්න', 'அறிவிப்புகளை இயக்கவும்'],
     'Allow Epoch School to show pop-up notifications for school updates on this device.': ['පාසල් යාවත්කාලීන සඳහා මෙම උපාංගයේ උත්පතන දැනුම්දීම් පෙන්වීමට Epoch School වෙත අවසර දෙන්න.', 'பள்ளி புதுப்பிப்புகளுக்காக இந்தச் சாதனத்தில் பாப்-அப் அறிவிப்புகளைக் காட்ட Epoch School ஐ அனுமதிக்கவும்.'],
     'Allow notifications': ['දැනුම්දීම්වලට අවසර දෙන්න', 'அறிவிப்புகளை அனுமதி'],
+    'Set up notifications': ['දැනුම්දීම් සකසන්න', 'அறிவிப்புகளை அமைக்கவும்'],
     'Later': ['පසුව', 'பிறகு'],
     'Notifications enabled': ['දැනුම්දීම් සක්‍රියයි', 'அறிவிப்புகள் இயக்கப்பட்டன'],
     'You can enable notifications in your browser settings.': ['ඔබට බ්‍රවුසර සැකසීම්වලින් දැනුම්දීම් සක්‍රිය කළ හැක.', 'உங்கள் உலாவி அமைப்புகளில் அறிவிப்புகளை இயக்கலாம்.'],
+    'Phone notifications need a secure HTTPS connection.': ['දුරකථන දැනුම්දීම් සඳහා ආරක්ෂිත HTTPS සම්බන්ධතාවයක් අවශ්‍යයි.', 'தொலைபேசி அறிவிப்புகளுக்கு பாதுகாப்பான HTTPS இணைப்பு தேவை.'],
     'Tap the Share button in Safari.': ['Safari හි Share බොත්තම ඔබන්න.', 'Safari இல் Share பொத்தானைத் தட்டவும்.'],
     'Choose "Add to Home Screen", then "Add".': ['"Add to Home Screen" තෝරා, "Add" ඔබන්න.', '"Add to Home Screen" ஐத் தேர்ந்தெடுத்து "Add" தட்டவும்.'],
     'Open the browser menu ⋮ at the top right.': ['ඉහළ දකුණේ ඇති බ්‍රවුසර මෙනුව ⋮ විවෘත කරන්න.', 'மேல் வலதுபுறத்தில் உள்ள உலாவி மெனு ⋮ ஐத் திறக்கவும்.'],
@@ -28,32 +30,76 @@
   });
 
   window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); prompt = e; });
-  window.addEventListener('appinstalled', () => { prompt = null; document.querySelectorAll('.pwa-install').forEach((b) => b.remove()); toast(t('Epoch School installed on this phone'), 'success'); setTimeout(window.offerNotificationPermission, 500); });
+  const promptKey = () => `epoch-push-prompted:${S.me?.id || 'user'}`;
+  const savePromptTime = () => { try { localStorage.setItem(promptKey(), String(Date.now())); } catch {} };
+  const promptWasRecent = () => { try { return Date.now() - Number(localStorage.getItem(promptKey()) || 0) < 86400000; } catch { return false; } };
+  const decodeKey = (value) => {
+    const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64 + '='.repeat((4 - base64.length % 4) % 4));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  };
 
-  window.offerNotificationPermission = () => {
-    if (!installed() || !('Notification' in window) || Notification.permission !== 'default' || !S.me) return;
-    try { if (localStorage.getItem('epoch-notifications-prompted') === 'yes') return; } catch {}
+  async function subscribeToPush() {
+    if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      toast(t('Phone notifications need a secure HTTPS connection.'), 'error');
+      return false;
+    }
+    const config = await GET('/api/push/key');
+    if (!config.enabled || !config.public_key) return false;
+    let permission = Notification.permission;
+    if (permission === 'default') permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      if (permission === 'denied') toast(t('You can enable notifications in your browser settings.'), '');
+      return false;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeKey(config.public_key),
+      });
+    }
+    await POST('/api/push/subscription', subscription.toJSON());
+    toast(t('Notifications enabled'), 'success');
+    return true;
+  }
+
+  window.offerNotificationPermission = async () => {
+    if (!installed() || !S.me || !('Notification' in window)) return;
+    let config;
+    try { config = await GET('/api/push/key'); } catch { return; }
+    if (!config.enabled) return;
+    if (!window.isSecureContext || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (Notification.permission === 'denied') return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await POST('/api/push/subscription', subscription.toJSON());
+        return;
+      }
+    } catch (e) { console.warn('Could not inspect push subscription:', e); }
+    if (promptWasRecent()) return;
     modal({
       title: t('Enable notifications'),
       body: `<p>${esc(t('Allow Epoch School to show pop-up notifications for school updates on this device.'))}</p>`,
-      submit: t('Allow notifications'),
+      submit: t(Notification.permission === 'granted' ? 'Set up notifications' : 'Allow notifications'),
       cancel: t('Later'),
       onSubmit: async () => {
-        const permission = await Notification.requestPermission();
-        try { localStorage.setItem('epoch-notifications-prompted', 'yes'); } catch {}
-        if (permission === 'granted') toast(t('Notifications enabled'), 'success');
-        else if (permission === 'denied') toast(t('You can enable notifications in your browser settings.'), '');
+        const enabled = await subscribeToPush();
+        savePromptTime();
+        if (!enabled) return false;
       },
-      onOpen: () => {
+      onOpen: (_form, close) => {
         const bg = document.querySelector('.modal-bg:last-child');
         bg?.addEventListener('click', (e) => {
-          if (e.target === bg || e.target.closest('[data-close]')) {
-            try { localStorage.setItem('epoch-notifications-prompted', 'yes'); } catch {}
-          }
+          if (e.target === bg || e.target.closest('[data-close]')) savePromptTime();
         });
       },
     });
   };
+  window.addEventListener('appinstalled', () => { prompt = null; document.querySelectorAll('.pwa-install').forEach((b) => b.remove()); toast(t('Epoch School installed on this phone'), 'success'); setTimeout(window.offerNotificationPermission, 500); });
 
   window.installApp = async () => {
     if (prompt) { prompt.prompt(); const { outcome } = await prompt.userChoice; if (outcome === 'accepted') prompt = null; return; }
@@ -95,6 +141,4 @@
     navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('Service worker not registered:', e));
   }
   // Also offer permission on the first signed-in launch from the installed app.
-  const priorBoot = window.boot;
-  if (typeof priorBoot === 'function') window.boot = async (...args) => { await priorBoot(...args); window.offerNotificationPermission(); };
 })();

@@ -116,7 +116,11 @@ func serve(ctx context.Context, cfg Config, store *storage) (*dbChange, error) {
 
 	log.Printf("Epoch School System running on http://localhost%s", displayAddr(cfg.Addr))
 	log.Printf("Database: %s (%s)", dbPath, source)
-	log.Printf("Notifications: in-app only | AI: %s", app.ai.statusText())
+	pushStatus := "web push not configured"
+	if app.pushEnabled() {
+		pushStatus = "web push configured (HTTPS required on phones)"
+	}
+	log.Printf("Notifications: in-app + %s | AI: %s", pushStatus, app.ai.statusText())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return nil, err
 	}
@@ -262,6 +266,9 @@ func (a *App) routes() http.Handler {
 	h("GET /api/notifications", anyone, a.handleListNotifications)
 	h("POST /api/notifications/read-all", anyone, a.handleReadAllNotifications)
 	h("POST /api/notifications/{id}/read", anyone, a.handleReadNotification)
+	h("GET /api/push/key", anyone, a.handlePushPublicKey)
+	h("POST /api/push/subscription", anyone, a.handleSavePushSubscription)
+	h("DELETE /api/push/subscription", anyone, a.handleDeletePushSubscription)
 	h("GET /api/messages", anyone, a.handleConversations)
 	h("GET /api/messages/contacts", anyone, a.handleContacts)
 	h("GET /api/messages/thread/{id}", anyone, a.handleThread)

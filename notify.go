@@ -46,15 +46,16 @@ type deliveryJob struct {
 }
 
 type Notifier struct {
-	a       *App
-	jobs    chan deliveryJob
-	sms     sender
-	wa      sender
-	startID int64 // deliveries above this id were queued by this run and are already in jobs
+	a        *App
+	jobs     chan deliveryJob
+	pushJobs chan pushJob
+	sms      sender
+	wa       sender
+	startID  int64 // deliveries above this id were queued by this run and are already in jobs
 }
 
 func newNotifier(a *App) *Notifier {
-	n := &Notifier{a: a, jobs: make(chan deliveryJob, 2000)}
+	n := &Notifier{a: a, jobs: make(chan deliveryJob, 2000), pushJobs: make(chan pushJob, 2000)}
 	a.db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM deliveries`).Scan(&n.startID)
 	hc := &http.Client{Timeout: 20 * time.Second}
 	cfg := a.cfg
@@ -94,6 +95,8 @@ func (n *Notifier) run(ctx context.Context) {
 					return
 				case j := <-n.jobs:
 					n.deliver(ctx, j)
+				case j := <-n.pushJobs:
+					n.deliverPush(j)
 				}
 			}
 		})
@@ -238,6 +241,9 @@ func (n *Notifier) Notify(category, title, body string, userIDs []int64, channel
 	}
 	for _, j := range jobs {
 		n.enqueue(j)
+	}
+	for _, r := range list {
+		n.enqueuePush(pushJob{userID: r.id, title: title, body: body})
 	}
 	return len(list), nil
 }
