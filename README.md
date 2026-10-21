@@ -3,7 +3,7 @@
 School communication and management system by **Epoch** (Gongawela Bus Station Complex, Matale · 076 843 7970).
 It sends parents, students and staff in-app notifications, runs the day-to-day school records behind them, and has a built-in AI assistant powered by Claude.
 
-It is a single Go binary: the HTML/CSS/JS frontend is embedded, the data is in SQLite, and nothing else needs to be installed.
+It is a single Go binary with the HTML/CSS/JS frontend embedded. The data is stored in PostgreSQL.
 
 ## Features
 
@@ -62,13 +62,30 @@ Records are permanent. They can't be deleted, only **voided** by the principal, 
 
 ## Quick start
 
+### PostgreSQL (once per computer)
+
+```bash
+sudo apt install postgresql
+sudo -u postgres createuser --createdb "$USER"
+createdb epoch
+```
+
+This lets your Linux login use the local database without a password, which is what the default `DATABASE_URL=postgres:///epoch` expects. For another server or a hosted database, set `DATABASE_URL` in `.env` (see [.env.example](.env.example)).
+
 ### Testing (no build)
 
 ```bash
 ./dev.sh
 ```
 
-This runs the system straight from source with `go run`, serves the UI from `web/` (HTML/CSS/JS changes show on refresh), and keeps its own test database in `.dev-data/`, so testing never touches the real school data. Then open http://localhost:8080.
+This runs the system straight from source with `go run`, serves the UI from `web/` (HTML/CSS/JS changes show on refresh), and uses its own `epoch_dev` database with the demo school, so testing never touches the real school data. Then open http://localhost:8080.
+
+The API test signs in as every role and runs the main workflows against a throwaway schema:
+
+```bash
+createdb epoch_test
+TEST_DATABASE_URL=postgres:///epoch_test go test ./...
+```
 
 ### Production
 
@@ -102,7 +119,7 @@ All demo accounts use the password `epoch123`, and so does the admin unless you 
 
 Every staff member also has **My Day** (check in/out, today's periods, relief duties, their weekly timetable and leave), **Leave Requests**, **Substitutions**, **Timetable**, **Messages** and the **AI Assistant**.
 
-Upgrading an existing database is automatic: the old "teacher" role becomes Class Teacher (if they have a class) or Subject Teacher. To get the full new demo school instead, delete the database file and restart with `SEED_DEMO=true`.
+To get the full demo school again, start with an empty database (`dropdb epoch && createdb epoch`) and `SEED_DEMO=true`.
 
 For a real school, set `SEED_DEMO=false` and a strong `ADMIN_PASSWORD` **before the first run**. Then add classes, teachers, students and parents from the admin console. You can create each parent's login in the same step as adding their child.
 
@@ -133,35 +150,48 @@ Copy `WEBPUSH_PUBLIC_KEY` and `WEBPUSH_PRIVATE_KEY` into `.env`; keep the privat
 
 ## Database & backups
 
-The database is kept **outside the project folder**, by default in `~/.local/share/epoch-school/epoch.db` on Linux (`EPOCH_DATA_DIR` changes the folder). If an older `data/epoch.db` is found in the project folder, it is copied there on first start.
+The data is stored in the PostgreSQL database given by `DATABASE_URL` (default `postgres:///epoch`, the local server). The tables are created automatically on first start.
 
-From **Settings → Database** an admin can:
+**Supabase.** Use the **Session pooler** connection string from the project's *Connect* button (port 5432), not the transaction pooler, and URL-encode special characters in the password (`@` becomes `%40`). The system turns on row level security for every table, so Supabase's public web API can't read the data; the system itself connects as the table owner and isn't affected. Supabase's free plan allows about 15 connections, so the server opens at most 10 (`DB_MAX_CONNS`). Run the server close to the database's region for the fastest pages.
 
-- **Move the database** to another file path. The data is copied and the system restarts itself in a few seconds. The old file is left in place.
-- **Open an existing database file**, e.g. to restore a backup.
-- **Download a backup**, or **Back up now** to a backup folder (default: `backups/` next to the database).
+**Moving from SQLite.** Earlier versions kept everything in an SQLite file. On the first start with a brand-new PostgreSQL database (no tables yet), the system looks for that file (`DB_PATH`, the location chosen in the old Settings page, `~/.local/share/epoch-school/epoch.db`, or `data/epoch.db`) and copies all of it in: users, students, attendance, fees, results, messages, timetable and everything else. The SQLite file is not changed. Everyone signs in again afterwards. To import a file by hand into an empty database:
+
+```bash
+./epoch-school import-sqlite /path/to/epoch.db
+```
+
+From **Settings → Database** an admin can see the database in use and its size, and:
+
+- **Download a backup**, or **Back up now** to a backup folder (default: `~/.local/share/epoch-school/backups`).
 - Turn on **daily automatic backups** and choose how many to keep.
 
-Backups are consistent snapshots (`VACUUM INTO`) that are safe to take while the system is running. Don't copy the live `.db` file directly, because recent changes may still be in the `-wal` file.
-The chosen path is remembered in `config.json` in the data folder. Setting `DB_PATH` in the environment pins the path and disables the Settings option.
+Backups are plain SQL files made with `pg_dump` (install `postgresql-client` on the server). They are consistent while the system is running. To restore one, load it into an empty database and point `DATABASE_URL` at it:
+
+```bash
+createdb epoch_restored
+psql epoch_restored < epoch-backup-2026-10-21-090000.sql
+```
+
+Backup settings are kept in `config.json` in the data folder (`EPOCH_DATA_DIR`).
 
 ## Deployment
 
 ```bash
 docker build -t epoch-school .
-docker run -d -p 8080:8080 --env-file .env -v epoch-data:/app/data epoch-school
+docker run -d -p 8080:8080 --env-file .env -e DATABASE_URL=postgres://epoch:PASSWORD@db-host:5432/epoch -v epoch-data:/app/data epoch-school
 ```
 
 Put it behind HTTPS (Caddy or Nginx) and set `SECURE_COOKIE=true`.
-In Docker the database lives in the `/app/data` volume. Keep any path you choose in Settings inside that volume.
+The container image has no `pg_dump`, so in Docker make backups on the database server (or with your hosting provider's backups).
 
 ## Project layout
 
 ```
 main.go              server, routes, middleware
 config.go            environment configuration
-db.go                schema, settings, demo seed
-storage.go           database location, config file, backups
+db.go                PostgreSQL connection, schema, settings, demo seed
+storage.go           database info, config file, pg_dump backups
+importsqlite.go      one-time import of an earlier version's SQLite database
 auth.go              login, sessions, roles, profile
 handlers_admin.go    dashboard, users, classes, routes, students, settings
 handlers_academic.go attendance, fees and reminders, homework, exams and results

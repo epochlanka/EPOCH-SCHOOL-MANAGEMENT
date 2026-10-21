@@ -1,11 +1,10 @@
 // Epoch School Communication & Management System.
-// A single Go binary that serves the web UI and JSON API, stores data in SQLite,
+// A single Go binary that serves the web UI and JSON API, stores data in PostgreSQL,
 // delivers notifications over App / SMS / WhatsApp and integrates Claude for AI features.
 package main
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -25,16 +23,13 @@ import (
 var webFS embed.FS
 
 type App struct {
-	db      *sql.DB
-	cfg     Config
-	notify  *Notifier
-	ai      *AI
-	limiter *loginLimiter
-
+	db       *DB
+	cfg      Config
+	notify   *Notifier
+	ai       *AI
+	limiter  *loginLimiter
 	store    *storage
-	dbPath   string
-	dbSource string          // "env", "settings" or "default"
-	restart  func(*dbChange) // stops the server so it can reopen with another database
+	settings settingsCache
 }
 
 func main() {
@@ -50,49 +45,48 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	// epoch-school import-sqlite <file> copies an earlier version's SQLite database into PostgreSQL.
+	if len(os.Args) == 3 && os.Args[1] == "import-sqlite" {
+		db, err := openDB(cfg.DatabaseURL)
+		if err != nil {
+			log.Fatalf("database: %v", err)
+		}
+		defer db.Close()
+		counts, err := importSQLite(db, os.Args[2])
+		if err != nil {
+			log.Fatalf("import: %v", err)
+		}
+		for _, t := range importTables {
+			if counts[t] > 0 {
+				fmt.Printf("%-20s %d rows\n", t, counts[t])
+			}
+		}
+		fmt.Println("Import finished.")
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	// serve returns a change when the admin picks another database in Settings;
-	// the server then starts again on the new file.
-	for {
-		change, err := serve(ctx, cfg, store)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if change == nil {
-			return
-		}
-		log.Printf("Restarting...")
+	if err := serve(ctx, cfg, store); err != nil {
+		log.Fatal(err)
 	}
 }
 
-func serve(ctx context.Context, cfg Config, store *storage) (*dbChange, error) {
-	dbPath, source := store.dbPath(cfg)
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		return nil, err
-	}
-	migrateLegacyDB(dbPath, source)
-	db, err := openDB(dbPath)
+func serve(ctx context.Context, cfg Config, store *storage) error {
+	db, err := openDB(cfg.DatabaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("database %s: %w", dbPath, err)
+		return fmt.Errorf("database (%s): %w", describeDB(cfg.DatabaseURL), err)
 	}
 	defer db.Close()
+	importLegacyOnFirstStart(db, cfg, store)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	changes := make(chan *dbChange, 1)
-	app := &App{db: db, cfg: cfg, limiter: newLoginLimiter(), store: store, dbPath: dbPath, dbSource: source}
-	app.restart = func(c *dbChange) {
-		select {
-		case changes <- c:
-			cancel()
-		default: // a change is already in progress
-		}
-	}
+	app := &App{db: db, cfg: cfg, limiter: newLoginLimiter(), store: store}
 	app.notify = newNotifier(app)
 	app.ai = newAI(app)
 	if err := app.seed(); err != nil {
-		return nil, fmt.Errorf("seed: %w", err)
+		return fmt.Errorf("seed: %w", err)
 	}
 
 	var workers sync.WaitGroup
@@ -115,25 +109,18 @@ func serve(ctx context.Context, cfg Config, store *storage) (*dbChange, error) {
 	}()
 
 	log.Printf("Epoch School System running on http://localhost%s", displayAddr(cfg.Addr))
-	log.Printf("Database: %s (%s)", dbPath, source)
+	log.Printf("Database: %s", describeDB(cfg.DatabaseURL))
 	pushStatus := "web push not configured"
 	if app.pushEnabled() {
 		pushStatus = "web push configured (HTTPS required on phones)"
 	}
 	log.Printf("Notifications: in-app + %s | AI: %s", pushStatus, app.ai.statusText())
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return nil, err
+		return err
 	}
 	<-stopped
 	workers.Wait()
-
-	select {
-	case c := <-changes:
-		applyDBChange(store, db, c)
-		return c, nil
-	default:
-		return nil, nil
-	}
+	return nil
 }
 
 func displayAddr(addr string) string {
@@ -185,7 +172,6 @@ func (a *App) routes() http.Handler {
 	h("PUT /api/system/storage", PSettings, a.handlePutStorage)
 	h("POST /api/system/backup", PSettings, a.handleBackupNow)
 	h("GET /api/system/backup/download", PSettings, a.handleDownloadBackup)
-	h("POST /api/system/database", PSettings, a.handleChangeDatabase)
 
 	// Subjects, timetable, staff attendance, leave, substitutions
 	h("GET /api/subjects", staff, a.handleListSubjects)

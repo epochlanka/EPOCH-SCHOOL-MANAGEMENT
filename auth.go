@@ -96,7 +96,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var u User
 	var hash string
 	var active int
-	err := a.db.QueryRow(`SELECT id,name,email,phone,whatsapp,role,language,password_hash,active FROM users WHERE email=?`,
+	err := a.db.QueryRow(`SELECT id,name,email,phone,whatsapp,role,language,password_hash,active FROM users WHERE lower(email)=lower(?)`,
 		strings.TrimSpace(req.Email)).Scan(&u.ID, &u.Name, &u.Email, &u.Phone, &u.WhatsApp, &u.Role, &u.Language, &hash, &active)
 	if err != nil || active == 0 || bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
 		a.limiter.fail(limitKey)
@@ -166,20 +166,29 @@ func (a *App) auth(perm string, fn handlerFunc) http.Handler {
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request, u *User) {
 	children := []map[string]any{}
 	var err error
-	switch u.Role {
-	case "parent":
-		children, err = a.queryMaps(`SELECT s.id,s.name,s.admission_no,s.gender,c.name||' - '||c.section AS class_name
-			FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? ORDER BY s.name`, u.ID)
-	case "student":
-		children, err = a.queryMaps(`SELECT s.id,s.name,s.admission_no,s.gender,c.name||' - '||c.section AS class_name
-			FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE s.user_id=?`, u.ID)
-	}
+	var unread, unreadMsg, pendingLeave, pendingPickups float64
+	parallel(
+		func() {
+			switch u.Role {
+			case "parent":
+				children, err = a.queryMaps(`SELECT s.id,s.name,s.admission_no,s.gender,c.name||' - '||c.section AS class_name
+					FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? ORDER BY s.name`, u.ID)
+			case "student":
+				children, err = a.queryMaps(`SELECT s.id,s.name,s.admission_no,s.gender,c.name||' - '||c.section AS class_name
+					FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE s.user_id=?`, u.ID)
+			}
+		},
+		func() {
+			a.db.QueryRow(`SELECT (SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0),
+				(SELECT COUNT(*) FROM messages WHERE recipient_id=? AND is_read=0)`, u.ID, u.ID).Scan(&unread, &unreadMsg)
+		},
+		func() { pendingLeave = a.pendingLeaveCount(u) },
+		func() { pendingPickups = a.pendingPickups(u) },
+	)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	unread := a.scalar(`SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0`, u.ID)
-	unreadMsg := a.scalar(`SELECT COUNT(*) FROM messages WHERE recipient_id=? AND is_read=0`, u.ID)
 	writeJSON(w, 200, map[string]any{
 		"user": u, "children": children,
 		"unread_notifications": unread, "unread_messages": unreadMsg,
@@ -190,7 +199,7 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request, u *User) {
 		"ai_enabled": a.ai.enabled,
 		"role_label": roleLabel(u.Role), "perms": roles[u.Role].Perms, "staff": isStaff(u.Role), "teaching": isTeaching(u.Role),
 		"roles":         rolesForClient(),
-		"pending_leave": a.pendingLeaveCount(u), "pending_pickups": a.pendingPickups(u),
+		"pending_leave": pendingLeave, "pending_pickups": pendingPickups,
 	})
 }
 

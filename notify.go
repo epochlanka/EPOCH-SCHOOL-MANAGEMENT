@@ -226,12 +226,11 @@ func (n *Notifier) Notify(category, title, body string, userIDs []int64, channel
 						r.id, ch, "", category, title, text, "skipped", "no phone number on file", ts)
 					continue
 				}
-				res, err := tx.Exec(`INSERT INTO deliveries(user_id,channel,recipient,category,title,message,status,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+				did, err := tx.InsertID(`INSERT INTO deliveries(user_id,channel,recipient,category,title,message,status,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 					r.id, ch, to, category, title, text, "queued", ts)
 				if err != nil {
 					return 0, err
 				}
-				did, _ := res.LastInsertId()
 				jobs = append(jobs, deliveryJob{did, ch, to, text})
 			}
 		}

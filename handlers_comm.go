@@ -212,15 +212,15 @@ func (a *App) handleContacts(w http.ResponseWriter, r *http.Request, u *User) {
 	var err error
 	if isStaff(u.Role) {
 		rows, err = a.queryMaps(`SELECT u.id,u.name,u.role,
-			COALESCE((SELECT group_concat(s.name, ', ') FROM students s WHERE s.parent_id=u.id),
-				(SELECT group_concat(c.name||' - '||c.section, ', ') FROM classes c WHERE c.teacher_id=u.id)) AS detail
+			COALESCE((SELECT string_agg(s.name, ', ' ORDER BY s.name) FROM students s WHERE s.parent_id=u.id),
+				(SELECT string_agg(c.name||' - '||c.section, ', ' ORDER BY c.name) FROM classes c WHERE c.teacher_id=u.id)) AS detail
 			FROM users u WHERE u.active=1 AND u.id<>? AND u.role<>'student' ORDER BY u.role='parent', u.name`, u.ID)
 	} else {
 		// Families see their children's class and subject teachers first, then school management and office.
 		rows, err = a.queryMaps(`SELECT u.id,u.name,u.role,
-			(SELECT group_concat(c.name||' - '||c.section, ', ') FROM classes c WHERE c.teacher_id=u.id) AS detail,
+			(SELECT string_agg(c.name||' - '||c.section, ', ' ORDER BY c.name) FROM classes c WHERE c.teacher_id=u.id) AS detail,
 			EXISTS(SELECT 1 FROM students s JOIN classes c ON c.id=s.class_id WHERE (s.parent_id=? OR s.user_id=?)
-				AND (c.teacher_id=u.id OR EXISTS(SELECT 1 FROM class_subjects cs WHERE cs.class_id=c.id AND cs.teacher_id=u.id))) AS mine
+				AND (c.teacher_id=u.id OR EXISTS(SELECT 1 FROM class_subjects cs WHERE cs.class_id=c.id AND cs.teacher_id=u.id)))::int AS mine
 			FROM users u WHERE u.active=1 AND u.role IN `+staffRolesSQL+` ORDER BY mine DESC, u.name`, u.ID, u.ID)
 	}
 	if err != nil {
@@ -236,7 +236,7 @@ func (a *App) handleContacts(w http.ResponseWriter, r *http.Request, u *User) {
 func (a *App) handleConversations(w http.ResponseWriter, r *http.Request, u *User) {
 	rows, err := a.queryMaps(`SELECT c.other_id, u.name, u.role, m.body, m.created_at, m.sender_id, c.unread
 		FROM (SELECT CASE WHEN sender_id=? THEN recipient_id ELSE sender_id END AS other_id, MAX(id) AS last_id,
-			SUM(CASE WHEN recipient_id=? AND is_read=0 THEN 1 ELSE 0 END) AS unread
+			COUNT(*) FILTER (WHERE recipient_id=? AND is_read=0) AS unread
 			FROM messages WHERE sender_id=? OR recipient_id=? GROUP BY other_id) c
 		JOIN messages m ON m.id=c.last_id JOIN users u ON u.id=c.other_id ORDER BY m.id DESC`, u.ID, u.ID, u.ID, u.ID)
 	if err != nil {
@@ -249,7 +249,7 @@ func (a *App) handleConversations(w http.ResponseWriter, r *http.Request, u *Use
 func (a *App) threadMessages(userID, otherID int64, limit int) ([]map[string]any, error) {
 	return a.queryMaps(`SELECT * FROM (SELECT m.*, s.name AS sender_name FROM messages m JOIN users s ON s.id=m.sender_id
 		WHERE (m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?)
-		ORDER BY m.id DESC LIMIT ?) ORDER BY id`, userID, otherID, otherID, userID, limit)
+		ORDER BY m.id DESC LIMIT ?) t ORDER BY id`, userID, otherID, otherID, userID, limit)
 }
 
 func (a *App) handleThread(w http.ResponseWriter, r *http.Request, u *User) {
@@ -299,12 +299,11 @@ func (a *App) handleSendMessage(w http.ResponseWriter, r *http.Request, u *User)
 		errJSON(w, 403, "You cannot message this user")
 		return
 	}
-	res, err := a.db.Exec(`INSERT INTO messages(sender_id,recipient_id,body,created_at) VALUES(?,?,?,?)`, u.ID, req.To, req.Body, now())
+	id, err := a.db.InsertID(`INSERT INTO messages(sender_id,recipient_id,body,created_at) VALUES(?,?,?,?)`, u.ID, req.To, req.Body, now())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	id, _ := res.LastInsertId()
 	preview := req.Body
 	if len([]rune(preview)) > 140 {
 		preview = string([]rune(preview)[:140]) + "…"
@@ -363,23 +362,64 @@ func (a *App) handlePortal(w http.ResponseWriter, r *http.Request, u *User) {
 	t := today()
 	month := t[:7]
 
-	attendance, _ := a.queryMaps(`SELECT date,status FROM attendance WHERE student_id=? ORDER BY date DESC LIMIT 30`, sid)
-	stats := map[string]float64{
-		"present": a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND status='present' AND substr(date,1,7)=?`, sid, month),
-		"absent":  a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND status='absent' AND substr(date,1,7)=?`, sid, month),
-		"late":    a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND status='late' AND substr(date,1,7)=?`, sid, month),
-		"overall": a.scalar(`SELECT ROUND(100.0*SUM(status!='absent')/MAX(COUNT(*),1),1) FROM attendance WHERE student_id=?`, sid),
-	}
-	var todayStatus string
-	a.db.QueryRow(`SELECT status FROM attendance WHERE student_id=? AND date=?`, sid, t).Scan(&todayStatus)
-	fees, _ := a.queryMaps(`SELECT id,title,amount,due_date,status,paid_at, CASE WHEN status='unpaid' AND due_date<? THEN 1 ELSE 0 END AS overdue
-		FROM fees WHERE student_id=? ORDER BY status DESC, due_date`, t, sid)
-	homework, _ := a.queryMaps(`SELECT h.subject,h.title,h.description,h.due_date,h.created_at,u.name AS teacher_name
-		FROM homework h LEFT JOIN users u ON u.id=h.teacher_id WHERE h.class_id=? ORDER BY h.due_date DESC LIMIT 30`, classID)
-	exams, _ := a.queryMaps(`SELECT subject,title,exam_date,exam_time,max_marks FROM exams WHERE class_id=? AND exam_date>=? ORDER BY exam_date`, classID, t)
-	results, _ := a.queryMaps(`SELECT e.subject,e.title,e.exam_date,e.max_marks,x.marks,x.remarks,
-		(SELECT ROUND(AVG(marks),1) FROM results y WHERE y.exam_id=e.id) AS class_average
-		FROM results x JOIN exams e ON e.id=x.exam_id WHERE x.student_id=? AND e.published=1 ORDER BY e.exam_date DESC`, sid)
+	cfg := a.timetableConfig()
+	var (
+		attendance, fees, homework, exams, results        []map[string]any
+		bus, notifications, timetable, earlyLeaves, loans []map[string]any
+		stats                                             = map[string]float64{}
+		todayStatus                                       string
+	)
+	// The sections of the page are independent, so they are fetched side by side.
+	parallel(
+		func() {
+			attendance, _ = a.queryMaps(`SELECT date,status FROM attendance WHERE student_id=? ORDER BY date DESC LIMIT 30`, sid)
+		},
+		func() {
+			var p, ab, l, overall float64
+			a.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE status='present' AND substr(date,1,7)=?),
+				COUNT(*) FILTER (WHERE status='absent' AND substr(date,1,7)=?), COUNT(*) FILTER (WHERE status='late' AND substr(date,1,7)=?),
+				ROUND(100.0*COUNT(*) FILTER (WHERE status<>'absent')/GREATEST(COUNT(*),1),1)::float8,
+				COALESCE(MAX(status) FILTER (WHERE date=?),'')
+				FROM attendance WHERE student_id=?`, month, month, month, t, sid).Scan(&p, &ab, &l, &overall, &todayStatus)
+			stats["present"], stats["absent"], stats["late"], stats["overall"] = p, ab, l, overall
+		},
+		func() {
+			fees, _ = a.queryMaps(`SELECT id,title,amount,due_date,status,paid_at, CASE WHEN status='unpaid' AND due_date<? THEN 1 ELSE 0 END AS overdue
+				FROM fees WHERE student_id=? ORDER BY status DESC, due_date`, t, sid)
+		},
+		func() {
+			homework, _ = a.queryMaps(`SELECT h.subject,h.title,h.description,h.due_date,h.created_at,u.name AS teacher_name
+				FROM homework h LEFT JOIN users u ON u.id=h.teacher_id WHERE h.class_id=? ORDER BY h.due_date DESC LIMIT 30`, classID)
+		},
+		func() {
+			exams, _ = a.queryMaps(`SELECT subject,title,exam_date,exam_time,max_marks FROM exams WHERE class_id=? AND exam_date>=? ORDER BY exam_date`, classID, t)
+		},
+		func() {
+			results, _ = a.queryMaps(`SELECT e.subject,e.title,e.exam_date,e.max_marks,x.marks,x.remarks,
+				(SELECT ROUND(AVG(marks)::numeric,1)::float8 FROM results y WHERE y.exam_id=e.id) AS class_average
+				FROM results x JOIN exams e ON e.id=x.exam_id WHERE x.student_id=? AND e.published=1 ORDER BY e.exam_date DESC`, sid)
+		},
+		func() {
+			bus, _ = a.queryMaps(`SELECT message,created_at FROM bus_updates WHERE route_id=? ORDER BY id DESC LIMIT 5`, routeID)
+		},
+		func() {
+			notifications, _ = a.queryMaps(`SELECT id,category,title,body,is_read,created_at FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 20`, u.ID)
+		},
+		func() {
+			timetable, _ = a.queryMaps(`SELECT t.day, t.period, s.name AS subject_name, u.name AS teacher_name,
+				(SELECT sb.name FROM substitutions x JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? AND x.class_id=t.class_id AND x.period=t.period AND t.day=?) AS relief_teacher
+				FROM timetable t JOIN subjects s ON s.id=t.subject_id LEFT JOIN users u ON u.id=t.teacher_id WHERE t.class_id=? ORDER BY t.day, t.period`,
+				t, cfg.schoolDay(t), classID)
+		},
+		func() {
+			earlyLeaves, _ = a.queryMaps(`SELECT e.date, e.time_out, e.collector_name, e.collector_relation, e.reason_type, e.reason, e.returned_at, r.name AS recorded_by_name
+				FROM early_leaves e LEFT JOIN users r ON r.id=e.recorded_by WHERE e.student_id=? AND e.voided=0 ORDER BY e.date DESC, e.time_out DESC LIMIT 20`, sid)
+		},
+		func() {
+			loans, _ = a.queryMaps(`SELECT b.title, l.due_date, CASE WHEN l.due_date<? THEN 1 ELSE 0 END AS overdue FROM loans l JOIN books b ON b.id=l.book_id
+				WHERE l.student_id=? AND l.returned_at=''`, t, sid)
+		},
+	)
 	for _, res := range results {
 		m, _ := res["marks"].(float64)
 		mx, _ := res["max_marks"].(float64)
@@ -387,17 +427,6 @@ func (a *App) handlePortal(w http.ResponseWriter, r *http.Request, u *User) {
 			res["grade"] = grade(m * 100 / mx)
 		}
 	}
-	bus, _ := a.queryMaps(`SELECT message,created_at FROM bus_updates WHERE route_id=? ORDER BY id DESC LIMIT 5`, routeID)
-	notifications, _ := a.queryMaps(`SELECT id,category,title,body,is_read,created_at FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 20`, u.ID)
-	cfg := a.timetableConfig()
-	timetable, _ := a.queryMaps(`SELECT t.day, t.period, s.name AS subject_name, u.name AS teacher_name,
-		(SELECT sb.name FROM substitutions x JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? AND x.class_id=t.class_id AND x.period=t.period AND t.day=?) AS relief_teacher
-		FROM timetable t JOIN subjects s ON s.id=t.subject_id LEFT JOIN users u ON u.id=t.teacher_id WHERE t.class_id=? ORDER BY t.day, t.period`,
-		t, cfg.schoolDay(t), classID)
-	earlyLeaves, _ := a.queryMaps(`SELECT e.date, e.time_out, e.collector_name, e.collector_relation, e.reason_type, e.reason, e.returned_at, r.name AS recorded_by_name
-		FROM early_leaves e LEFT JOIN users r ON r.id=e.recorded_by WHERE e.student_id=? AND e.voided=0 ORDER BY e.date DESC, e.time_out DESC LIMIT 20`, sid)
-	loans, _ := a.queryMaps(`SELECT b.title, l.due_date, CASE WHEN l.due_date<? THEN 1 ELSE 0 END AS overdue FROM loans l JOIN books b ON b.id=l.book_id
-		WHERE l.student_id=? AND l.returned_at=''`, t, sid)
 
 	writeJSON(w, 200, map[string]any{
 		"student": student, "today_status": todayStatus, "attendance": attendance, "attendance_stats": stats,

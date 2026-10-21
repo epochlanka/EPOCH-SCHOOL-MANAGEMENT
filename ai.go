@@ -330,7 +330,7 @@ func (a *App) assistantTools() []aiTool {
 					p.Date = today()
 				}
 				classes, err := a.queryMaps(`SELECT c.name||' - '||c.section AS class, COUNT(s.id) AS students,
-					SUM(a.status='present') AS present, SUM(a.status='absent') AS absent, SUM(a.status='late') AS late
+					COUNT(a.id) FILTER (WHERE a.status='present') AS present, COUNT(a.id) FILTER (WHERE a.status='absent') AS absent, COUNT(a.id) FILTER (WHERE a.status='late') AS late
 					FROM classes c LEFT JOIN students s ON s.class_id=c.id LEFT JOIN attendance a ON a.student_id=s.id AND a.date=?
 					GROUP BY c.id ORDER BY c.name`, p.Date)
 				if err != nil {
@@ -351,10 +351,10 @@ func (a *App) assistantTools() []aiTool {
 				json.Unmarshal(in, &p)
 				q := "%" + p.Query + "%"
 				return a.queryMaps(`SELECT s.id, s.name, s.admission_no, c.name||' - '||c.section AS class, p.name AS parent, p.phone AS parent_phone,
-					(SELECT ROUND(100.0*SUM(status!='absent')/MAX(COUNT(*),1),1) FROM attendance WHERE student_id=s.id) AS attendance_pct,
+					(SELECT ROUND(100.0*COUNT(*) FILTER (WHERE status<>'absent')/GREATEST(COUNT(*),1),1)::float8 FROM attendance WHERE student_id=s.id) AS attendance_pct,
 					(SELECT COALESCE(SUM(amount),0) FROM fees WHERE student_id=s.id AND status='unpaid') AS fee_balance
 					FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users p ON p.id=s.parent_id
-					WHERE s.name LIKE ? OR s.admission_no LIKE ? OR p.name LIKE ? LIMIT 20`, q, q, q)
+					WHERE s.name ILIKE ? OR s.admission_no ILIKE ? OR p.name ILIKE ? LIMIT 20`, q, q, q)
 			},
 		},
 		{
@@ -403,9 +403,9 @@ func (a *App) assistantTools() []aiTool {
 			roles: staff,
 			run: func(u *User, _ json.RawMessage) (any, error) {
 				return a.queryMaps(`SELECT e.id, e.subject, e.title, e.exam_date, e.max_marks, c.name||' - '||c.section AS class,
-					COUNT(x.id) AS results, ROUND(AVG(x.marks),1) AS average, MAX(x.marks) AS highest, MIN(x.marks) AS lowest
+					COUNT(x.id) AS results, ROUND(AVG(x.marks)::numeric,1)::float8 AS average, MAX(x.marks) AS highest, MIN(x.marks) AS lowest
 					FROM exams e JOIN classes c ON c.id=e.class_id LEFT JOIN results x ON x.exam_id=e.id
-					GROUP BY e.id ORDER BY e.exam_date DESC LIMIT 50`)
+					GROUP BY e.id, c.id ORDER BY e.exam_date DESC LIMIT 50`)
 			},
 		},
 		{
@@ -446,9 +446,9 @@ func (a *App) assistantTools() []aiTool {
 				var rows []map[string]any
 				var err error
 				if p.TeacherName != "" {
-					rows, err = a.queryMaps(q+`u.name LIKE ? ORDER BY t.day, t.period`, "%"+p.TeacherName+"%")
+					rows, err = a.queryMaps(q+`u.name ILIKE ? ORDER BY t.day, t.period`, "%"+p.TeacherName+"%")
 				} else {
-					rows, err = a.queryMaps(q+`(c.name||' '||c.section) LIKE ? ORDER BY t.day, t.period`, "%"+strings.ReplaceAll(p.ClassName, "-", "")+"%")
+					rows, err = a.queryMaps(q+`(c.name||' '||c.section) ILIKE ? ORDER BY t.day, t.period`, "%"+strings.ReplaceAll(p.ClassName, "-", "")+"%")
 				}
 				return map[string]any{"period_times": a.timetableConfig().Times, "entries": rows}, err
 			},
@@ -479,7 +479,7 @@ func (a *App) studentReport(id int64) (map[string]any, error) {
 	attendance, _ := a.queryMaps(`SELECT date,status FROM attendance WHERE student_id=? ORDER BY date DESC LIMIT 30`, id)
 	fees, _ := a.queryMaps(`SELECT title,amount,due_date,status FROM fees WHERE student_id=?`, id)
 	results, _ := a.queryMaps(`SELECT e.subject,e.title,e.exam_date,e.max_marks,x.marks,x.remarks,
-		(SELECT ROUND(AVG(marks),1) FROM results y WHERE y.exam_id=e.id) AS class_average
+		(SELECT ROUND(AVG(marks)::numeric,1)::float8 FROM results y WHERE y.exam_id=e.id) AS class_average
 		FROM results x JOIN exams e ON e.id=x.exam_id WHERE x.student_id=? AND e.published=1`, id)
 	homework, _ := a.queryMaps(`SELECT subject,title,due_date FROM homework WHERE class_id=(SELECT class_id FROM students WHERE id=?) AND due_date>=?`, id, today())
 	exams, _ := a.queryMaps(`SELECT subject,title,exam_date,exam_time FROM exams WHERE class_id=(SELECT class_id FROM students WHERE id=?) AND exam_date>=?`, id, today())

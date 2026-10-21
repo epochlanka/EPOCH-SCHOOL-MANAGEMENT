@@ -239,9 +239,16 @@ func (a *App) generateTimetable(classIDs []int64) (genResult, error) {
 	if _, err := tx.Exec(`DELETE FROM timetable WHERE class_id IN (`+inList+`)`, int64Args(classIDs)...); err != nil {
 		return res, err
 	}
-	for _, pl := range best {
-		if _, err := tx.Exec(`INSERT INTO timetable(class_id,day,period,subject_id,teacher_id) VALUES(?,?,?,?,?)`,
-			pl.l.classID, pl.day, pl.p, pl.l.subjectID, nullID(pl.l.teacherID)); err != nil {
+	// Insert in batches: one statement per few hundred periods instead of one each.
+	for start := 0; start < len(best); start += 500 {
+		batch := best[start:min(start+500, len(best))]
+		rows := make([]string, len(batch))
+		args := make([]any, 0, len(batch)*5)
+		for i, pl := range batch {
+			rows[i] = "(?,?,?,?,?)"
+			args = append(args, pl.l.classID, pl.day, pl.p, pl.l.subjectID, nullID(pl.l.teacherID))
+		}
+		if _, err := tx.Exec(`INSERT INTO timetable(class_id,day,period,subject_id,teacher_id) VALUES `+strings.Join(rows, ","), args...); err != nil {
 			return res, err
 		}
 	}
@@ -308,7 +315,7 @@ func (a *App) handleSaveSection(w http.ResponseWriter, r *http.Request, u *User)
 		_, err = a.db.Exec(`INSERT INTO sections(name,head_id,sort) VALUES(?,?,?)`, req.Name, nullID(req.HeadID), req.Sort)
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			errJSON(w, 409, "A section with this name already exists")
 			return
 		}
@@ -355,7 +362,7 @@ func (a *App) handleSaveSubject(w http.ResponseWriter, r *http.Request, u *User)
 		_, err = a.db.Exec(`INSERT INTO subjects(name,code) VALUES(?,?)`, req.Name, req.Code)
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			errJSON(w, 409, "This subject already exists")
 			return
 		}

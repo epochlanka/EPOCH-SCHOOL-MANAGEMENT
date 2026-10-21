@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,7 +20,18 @@ const (
 	dateLayout = "2006-01-02"
 )
 
-func now() string   { return time.Now().Format(tsLayout) }
+func now() string { return time.Now().Format(tsLayout) }
+
+// parallel runs independent queries side by side and waits for all of them. Every
+// query is a round trip to the database server, so a page that needs many of them
+// loads much faster this way.
+func parallel(fns ...func()) {
+	var wg sync.WaitGroup
+	for _, f := range fns {
+		wg.Go(f)
+	}
+	wg.Wait()
+}
 func today() string { return time.Now().Format(dateLayout) }
 
 // prettyDate turns 2026-10-22 into "22 Oct 2026".

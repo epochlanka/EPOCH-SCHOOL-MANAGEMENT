@@ -16,7 +16,7 @@ func (a *App) handleListAdmissions(w http.ResponseWriter, r *http.Request, u *Us
 	status := r.URL.Query().Get("status")
 	q := "%" + strings.TrimSpace(r.URL.Query().Get("q")) + "%"
 	rows, err := a.queryMaps(`SELECT ad.*, s.admission_no FROM admissions ad LEFT JOIN students s ON s.id=ad.student_id
-		WHERE (?='' OR ad.status=?) AND (ad.child_name LIKE ? OR ad.parent_name LIKE ? OR ad.phone LIKE ?)
+		WHERE (?='' OR ad.status=?) AND (ad.child_name ILIKE ? OR ad.parent_name ILIKE ? OR ad.phone ILIKE ?)
 		ORDER BY CASE ad.status WHEN 'enquiry' THEN 0 WHEN 'test_scheduled' THEN 1 WHEN 'offered' THEN 2 ELSE 3 END, ad.id DESC`,
 		status, status, q, q, q)
 	if err != nil {
@@ -112,29 +112,27 @@ func (a *App) handleEnrol(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	defer tx.Rollback()
 	var parentID int64
-	if err := tx.QueryRow(`SELECT id FROM users WHERE email=? AND role='parent'`, strings.TrimSpace(req.ParentEmail)).Scan(&parentID); err == sql.ErrNoRows {
+	if err := tx.QueryRow(`SELECT id FROM users WHERE lower(email)=lower(?) AND role='parent'`, strings.TrimSpace(req.ParentEmail)).Scan(&parentID); err == sql.ErrNoRows {
 		if len(req.ParentPassword) < 6 {
 			errJSON(w, 400, "Set a parent password of at least 6 characters")
 			return
 		}
 		hash, _ := hashPassword(req.ParentPassword)
-		res, err := tx.Exec(`INSERT INTO users(name,email,phone,whatsapp,role,password_hash,created_at) VALUES(?,?,?,?,?,?,?)`,
+		parentID, err = tx.InsertID(`INSERT INTO users(name,email,phone,whatsapp,role,password_hash,created_at) VALUES(?,?,?,?,?,?,?)`,
 			parent, strings.TrimSpace(req.ParentEmail), phone, phone, "parent", hash, now())
 		if err != nil {
 			errJSON(w, 409, "That email belongs to another account")
 			return
 		}
-		parentID, _ = res.LastInsertId()
 	}
 	var maxID int64
 	tx.QueryRow(`SELECT COALESCE(MAX(id),0) FROM students`).Scan(&maxID)
-	res, err := tx.Exec(`INSERT INTO students(admission_no,name,class_id,parent_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?)`,
+	sid, err := tx.InsertID(`INSERT INTO students(admission_no,name,class_id,parent_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?)`,
 		fmt.Sprintf("EP%04d", 1001+maxID), child, req.ClassID, parentID, gender, dob, now())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	sid, _ := res.LastInsertId()
 	tx.Exec(`UPDATE admissions SET status='enrolled', student_id=?, updated_at=? WHERE id=?`, sid, now(), id)
 	if err := tx.Commit(); err != nil {
 		serverError(w, err)
@@ -159,7 +157,7 @@ func (a *App) handleDeleteAdmission(w http.ResponseWriter, r *http.Request, u *U
 func (a *App) handleListBooks(w http.ResponseWriter, r *http.Request, u *User) {
 	q := "%" + strings.TrimSpace(r.URL.Query().Get("q")) + "%"
 	rows, err := a.queryMaps(`SELECT b.*, b.copies - (SELECT COUNT(*) FROM loans l WHERE l.book_id=b.id AND l.returned_at='') AS available
-		FROM books b WHERE b.title LIKE ? OR b.author LIKE ? OR b.isbn LIKE ? OR b.category LIKE ? ORDER BY b.title`, q, q, q, q)
+		FROM books b WHERE b.title ILIKE ? OR b.author ILIKE ? OR b.isbn ILIKE ? OR b.category ILIKE ? ORDER BY b.title`, q, q, q, q)
 	if err != nil {
 		serverError(w, err)
 		return

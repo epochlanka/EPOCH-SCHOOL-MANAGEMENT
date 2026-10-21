@@ -76,16 +76,15 @@ func (a *App) handleCreateEarlyLeave(w http.ResponseWriter, r *http.Request, u *
 		return
 	}
 	t := today()
-	res, err := a.db.Exec(`INSERT INTO early_leaves(student_id,date,time_out,collector_name,collector_relation,collector_id_no,collector_phone,
+	id, err := a.db.InsertID(`INSERT INTO early_leaves(student_id,date,time_out,collector_name,collector_relation,collector_id_no,collector_phone,
 		reason_type,reason,recorded_by,pickup_request_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		req.StudentID, t, req.TimeOut, req.Name, req.Relation, req.IDNo, req.Phone, req.ReasonType, req.Reason, u.ID, nullID(req.PickupID), now())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	id, _ := res.LastInsertId()
 	// The child was in school today: make sure attendance shows that.
-	a.db.Exec(`INSERT OR IGNORE INTO attendance(student_id,date,status,marked_by,created_at) VALUES(?,?,'present',?,?)`, req.StudentID, t, u.ID, now())
+	a.db.Exec(`INSERT INTO attendance(student_id,date,status,marked_by,created_at) VALUES(?,?,'present',?,?) ON CONFLICT(student_id,date) DO NOTHING`, req.StudentID, t, u.ID, now())
 	if req.PickupID > 0 {
 		a.db.Exec(`UPDATE pickup_requests SET status='acknowledged', handled_by=?, handled_at=? WHERE id=? AND student_id=? AND status='pending'`, u.ID, now(), req.PickupID, req.StudentID)
 	}

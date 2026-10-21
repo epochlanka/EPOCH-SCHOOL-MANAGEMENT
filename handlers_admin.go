@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,28 +10,115 @@ import (
 
 func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 	t := today()
-	counts := map[string]float64{
-		"students": a.scalar(`SELECT COUNT(*) FROM students`),
-		"teachers": a.scalar(`SELECT COUNT(*) FROM users WHERE role IN ` + teachingRolesSQL + ` AND active=1`),
-		"staff":    a.scalar(`SELECT COUNT(*) FROM users WHERE role IN ` + staffRolesSQL + ` AND active=1`),
-		"parents":  a.scalar(`SELECT COUNT(*) FROM users WHERE role='parent' AND active=1`),
-		"classes":  a.scalar(`SELECT COUNT(*) FROM classes`),
-		"routes":   a.scalar(`SELECT COUNT(*) FROM routes`),
-	}
-	att := map[string]float64{
-		"present": a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=? AND status='present'`, t),
-		"absent":  a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=? AND status='absent'`, t),
-		"late":    a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=? AND status='late'`, t),
+	trendFrom := time.Now().AddDate(0, 0, -13).Format(dateLayout)
+	var (
+		counts, att, fees, subs      = map[string]float64{}, map[string]float64{}, map[string]float64{}, map[string]float64{}
+		sentToday                    float64
+		trendRows                    []map[string]any
+		channels, recent, absentees  []map[string]any
+		upcoming, staffAway, pending []map[string]any
+		onLeave                      map[int64]bool
+		teachingIDs                  []int64
+		marks                        = map[int64]string{}
+		errCounts, errChannels       error
+	)
+	// The queries don't depend on each other, so they run side by side.
+	parallel(
+		func() {
+			var c [6]float64
+			errCounts = a.db.QueryRow(`SELECT (SELECT COUNT(*) FROM students),
+				(SELECT COUNT(*) FROM users WHERE role IN `+teachingRolesSQL+` AND active=1),
+				(SELECT COUNT(*) FROM users WHERE role IN `+staffRolesSQL+` AND active=1),
+				(SELECT COUNT(*) FROM users WHERE role='parent' AND active=1),
+				(SELECT COUNT(*) FROM classes), (SELECT COUNT(*) FROM routes)`).Scan(&c[0], &c[1], &c[2], &c[3], &c[4], &c[5])
+			for i, k := range []string{"students", "teachers", "staff", "parents", "classes", "routes"} {
+				counts[k] = c[i]
+			}
+		},
+		func() {
+			var p, ab, l float64
+			a.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE status='present'), COUNT(*) FILTER (WHERE status='absent'),
+				COUNT(*) FILTER (WHERE status='late') FROM attendance WHERE date=?`, t).Scan(&p, &ab, &l)
+			att["present"], att["absent"], att["late"] = p, ab, l
+		},
+		func() {
+			var out, overdueN, overdue, collected float64
+			a.db.QueryRow(`SELECT COALESCE(SUM(amount) FILTER (WHERE status='unpaid'),0),
+				COUNT(*) FILTER (WHERE status='unpaid' AND due_date < ?),
+				COALESCE(SUM(amount) FILTER (WHERE status='unpaid' AND due_date < ?),0),
+				COALESCE(SUM(amount) FILTER (WHERE status='paid' AND substr(paid_at,1,7)=?),0) FROM fees`, t, t, t[:7]).Scan(&out, &overdueN, &overdue, &collected)
+			fees["outstanding"], fees["overdue_count"], fees["overdue_amount"], fees["collected_month"] = out, overdueN, overdue, collected
+		},
+		func() {
+			trendRows, _ = a.queryMaps(`SELECT date, COUNT(*) AS total, COUNT(*) FILTER (WHERE status IN ('present','late')) AS present
+				FROM attendance WHERE date BETWEEN ? AND ? GROUP BY date`, trendFrom, t)
+		},
+		func() {
+			var as, un float64
+			a.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE status='assigned'), COUNT(*) FILTER (WHERE status='unfilled')
+				FROM substitutions WHERE date=?`, t).Scan(&as, &un)
+			subs["assigned"], subs["unfilled"] = as, un
+			sentToday = a.scalar(`SELECT COUNT(*) FROM deliveries WHERE substr(created_at,1,10)=?`, t)
+		},
+		func() {
+			channels, errChannels = a.queryMaps(`SELECT channel, status, COUNT(*) AS n FROM deliveries WHERE created_at >= ? GROUP BY channel, status`,
+				time.Now().AddDate(0, 0, -30).Format(tsLayout))
+		},
+		func() {
+			recent, _ = a.queryMaps(`SELECT d.channel,d.category,d.title,d.status,d.created_at,u.name AS user_name
+				FROM deliveries d LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC LIMIT 10`)
+		},
+		func() {
+			absentees, _ = a.queryMaps(`SELECT s.name, c.name||' - '||c.section AS class_name, a.status
+				FROM attendance a JOIN students s ON s.id=a.student_id LEFT JOIN classes c ON c.id=s.class_id
+				WHERE a.date=? AND a.status IN ('absent','late') ORDER BY a.status, s.name`, t)
+		},
+		func() {
+			upcoming, _ = a.queryMaps(`SELECT e.subject,e.title,e.exam_date,c.name||' - '||c.section AS class_name
+				FROM exams e JOIN classes c ON c.id=e.class_id WHERE e.exam_date >= ? ORDER BY e.exam_date LIMIT 5`, t)
+		},
+		func() { onLeave = a.staffOnLeave(t) },
+		func() {
+			teachingIDs, _ = a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN ` + teachingRolesSQL)
+		},
+		func() {
+			rows, err := a.db.Query(`SELECT user_id, status FROM staff_attendance WHERE date=?`, t)
+			if err != nil {
+				return
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				var st string
+				rows.Scan(&id, &st)
+				marks[id] = st
+			}
+		},
+		func() {
+			staffAway, _ = a.queryMaps(`SELECT u.id, u.name, u.role, COALESCE(sa.status,'leave') AS status,
+				(SELECT leave_type FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date LIMIT 1) AS leave_type
+				FROM users u LEFT JOIN staff_attendance sa ON sa.user_id=u.id AND sa.date=?
+				WHERE u.active=1 AND u.role IN `+staffRolesSQL+` AND (sa.status IN ('absent','late','leave') OR EXISTS
+				(SELECT 1 FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date)) ORDER BY u.name`, t, t, t)
+		},
+		func() {
+			pending, _ = a.queryMaps(`SELECT l.id, l.leave_type, l.from_date, l.to_date, l.reason, u.name, u.role,
+				(l.to_date::date - l.from_date::date + 1) AS days
+				FROM leave_requests l JOIN users u ON u.id=l.user_id WHERE l.status='pending' AND l.user_id<>? ORDER BY l.from_date LIMIT 10`, u.ID)
+		},
+	)
+	if err := errors.Join(errCounts, errChannels); err != nil {
+		serverError(w, err)
+		return
 	}
 	att["unmarked"] = counts["students"] - att["present"] - att["absent"] - att["late"]
 
-	fees := map[string]float64{
-		"outstanding":     a.scalar(`SELECT COALESCE(SUM(amount),0) FROM fees WHERE status='unpaid'`),
-		"overdue_count":   a.scalar(`SELECT COUNT(*) FROM fees WHERE status='unpaid' AND due_date < ?`, t),
-		"overdue_amount":  a.scalar(`SELECT COALESCE(SUM(amount),0) FROM fees WHERE status='unpaid' AND due_date < ?`, t),
-		"collected_month": a.scalar(`SELECT COALESCE(SUM(amount),0) FROM fees WHERE status='paid' AND substr(paid_at,1,7)=?`, t[:7]),
+	byDate := map[string][2]float64{}
+	for _, row := range trendRows {
+		total, _ := row["total"].(int64)
+		present, _ := row["present"].(int64)
+		byDate[row["date"].(string)] = [2]float64{float64(total), float64(present)}
 	}
-
 	trend := []map[string]any{}
 	for i := 13; i >= 0; i-- {
 		d := time.Now().AddDate(0, 0, -i)
@@ -38,8 +126,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 			continue
 		}
 		ds := d.Format(dateLayout)
-		total := a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=?`, ds)
-		present := a.scalar(`SELECT COUNT(*) FROM attendance WHERE date=? AND status IN ('present','late')`, ds)
+		total, present := byDate[ds][0], byDate[ds][1]
 		pct := 0.0
 		if total > 0 {
 			pct = present * 100 / total
@@ -47,33 +134,8 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 		trend = append(trend, map[string]any{"date": ds, "label": d.Format("Mon 02"), "percent": pct, "marked": total})
 	}
 
-	channels, err := a.queryMaps(`SELECT channel, status, COUNT(*) AS n FROM deliveries WHERE created_at >= ? GROUP BY channel, status`,
-		time.Now().AddDate(0, 0, -30).Format(tsLayout))
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	recent, _ := a.queryMaps(`SELECT d.channel,d.category,d.title,d.status,d.created_at,u.name AS user_name
-		FROM deliveries d LEFT JOIN users u ON u.id=d.user_id ORDER BY d.id DESC LIMIT 10`)
-	absentees, _ := a.queryMaps(`SELECT s.name, c.name||' - '||c.section AS class_name, a.status
-		FROM attendance a JOIN students s ON s.id=a.student_id LEFT JOIN classes c ON c.id=s.class_id
-		WHERE a.date=? AND a.status IN ('absent','late') ORDER BY a.status, s.name`, t)
-	upcoming, _ := a.queryMaps(`SELECT e.subject,e.title,e.exam_date,c.name||' - '||c.section AS class_name
-		FROM exams e JOIN classes c ON c.id=e.class_id WHERE e.exam_date >= ? ORDER BY e.exam_date LIMIT 5`, t)
-
 	// Teacher attendance today.
-	onLeave := a.staffOnLeave(t)
-	teachingIDs, _ := a.queryIDs(`SELECT id FROM users WHERE active=1 AND role IN ` + teachingRolesSQL)
 	staffAtt := map[string]int{"present": 0, "late": 0, "absent": 0, "on_leave": 0, "not_marked": 0}
-	marks := map[int64]string{}
-	markRows, _ := a.db.Query(`SELECT user_id, status FROM staff_attendance WHERE date=?`, t)
-	for markRows.Next() {
-		var id int64
-		var st string
-		markRows.Scan(&id, &st)
-		marks[id] = st
-	}
-	markRows.Close()
 	for _, id := range teachingIDs {
 		switch {
 		case onLeave[id] || marks[id] == "leave":
@@ -84,24 +146,12 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 			staffAtt[marks[id]]++
 		}
 	}
-	staffAway, _ := a.queryMaps(`SELECT u.id, u.name, u.role, COALESCE(sa.status,'leave') AS status,
-		(SELECT leave_type FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date LIMIT 1) AS leave_type
-		FROM users u LEFT JOIN staff_attendance sa ON sa.user_id=u.id AND sa.date=?
-		WHERE u.active=1 AND u.role IN `+staffRolesSQL+` AND (sa.status IN ('absent','late','leave') OR EXISTS
-		(SELECT 1 FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date)) ORDER BY u.name`, t, t, t)
 	for _, row := range staffAway {
 		row["role_label"] = roleLabel(row["role"].(string))
 	}
-	pending, _ := a.queryMaps(`SELECT l.id, l.leave_type, l.from_date, l.to_date, l.reason, u.name, u.role,
-		CAST(julianday(l.to_date)-julianday(l.from_date)+1 AS INTEGER) AS days
-		FROM leave_requests l JOIN users u ON u.id=l.user_id WHERE l.status='pending' AND l.user_id<>? ORDER BY l.from_date LIMIT 10`, u.ID)
 	for _, row := range pending {
 		row["role_label"] = roleLabel(row["role"].(string))
 		row["type_label"] = leaveTypes[row["leave_type"].(string)]
-	}
-	subs := map[string]float64{
-		"assigned": a.scalar(`SELECT COUNT(*) FROM substitutions WHERE date=? AND status='assigned'`, t),
-		"unfilled": a.scalar(`SELECT COUNT(*) FROM substitutions WHERE date=? AND status='unfilled'`, t),
 	}
 
 	writeJSON(w, 200, map[string]any{
@@ -109,7 +159,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 		"can_approve": hasPerm(u.Role, PLeaveApprove), "can_fees": hasPerm(u.Role, PFeesView),
 		"counts": counts, "attendance": att, "fees": fees, "trend": trend,
 		"channels": channels, "recent": recent, "absentees": absentees, "upcoming_exams": upcoming,
-		"sent_today": a.scalar(`SELECT COUNT(*) FROM deliveries WHERE substr(created_at,1,10)=?`, t),
+		"sent_today": sentToday,
 	})
 }
 
@@ -118,7 +168,7 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 func (a *App) handleListUsers(w http.ResponseWriter, r *http.Request, u *User) {
 	role := r.URL.Query().Get("role")
 	q := `SELECT u.id,u.name,u.email,u.phone,u.whatsapp,u.role,u.language,u.active,u.created_at,
-		(SELECT group_concat(s.name, ', ') FROM students s WHERE s.parent_id=u.id) AS children
+		(SELECT string_agg(s.name, ', ' ORDER BY s.name) FROM students s WHERE s.parent_id=u.id) AS children
 		FROM users u WHERE (?='' OR u.role=?)`
 	args := []any{role, role}
 	if !hasPerm(u.Role, PUsers) { // others may only browse staff and parents
@@ -188,17 +238,16 @@ func (a *App) handleCreateUser(w http.ResponseWriter, r *http.Request, u *User) 
 		serverError(w, err)
 		return
 	}
-	res, err := a.db.Exec(`INSERT INTO users(name,email,phone,whatsapp,role,language,password_hash,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+	id, err := a.db.InsertID(`INSERT INTO users(name,email,phone,whatsapp,role,language,password_hash,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		req.Name, req.Email, req.Phone, req.WhatsApp, req.Role, req.Language, hash, now())
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			errJSON(w, 409, "A user with this email already exists")
 			return
 		}
 		serverError(w, err)
 		return
 	}
-	id, _ := res.LastInsertId()
 	writeJSON(w, 201, map[string]any{"id": id})
 }
 
@@ -230,7 +279,7 @@ func (a *App) handleUpdateUser(w http.ResponseWriter, r *http.Request, u *User) 
 	_, err := a.db.Exec(`UPDATE users SET name=?,email=?,phone=?,whatsapp=?,role=?,language=?,active=? WHERE id=?`,
 		req.Name, req.Email, req.Phone, req.WhatsApp, req.Role, req.Language, active, id)
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			errJSON(w, 409, "A user with this email already exists")
 			return
 		}
@@ -280,7 +329,7 @@ func (a *App) handleListClasses(w http.ResponseWriter, r *http.Request, u *User)
 		c.name||' - '||c.section AS label, sec.name AS section_name,
 		(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS student_count,
 		(SELECT COUNT(*) FROM class_subjects cs WHERE cs.class_id=c.id) AS subject_count,
-		(SELECT COALESCE(SUM(periods_per_week),0) FROM class_subjects cs WHERE cs.class_id=c.id) AS periods
+		(SELECT COALESCE(SUM(periods_per_week),0)::bigint FROM class_subjects cs WHERE cs.class_id=c.id) AS periods
 		FROM classes c LEFT JOIN users t ON t.id=c.teacher_id LEFT JOIN sections sec ON sec.id=c.section_id
 		WHERE 1=1`+where+` ORDER BY sec.sort, c.name, c.section`, args...)
 	if err != nil {
@@ -320,7 +369,7 @@ func (a *App) handleSaveClass(w http.ResponseWriter, r *http.Request, u *User) {
 		_, err = a.db.Exec(`INSERT INTO classes(name,section,teacher_id,section_id) VALUES(?,?,?,?)`, req.Name, req.Section, nullID(req.TeacherID), nullID(req.SectionID))
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			errJSON(w, 409, "This class and section already exist")
 			return
 		}
@@ -397,9 +446,9 @@ func (a *App) handleListStudents(w http.ResponseWriter, r *http.Request, u *User
 	rows, err := a.queryMaps(`SELECT s.id,s.admission_no,s.name,s.gender,s.dob,s.class_id,s.parent_id,s.route_id,s.user_id,
 		c.name||' - '||c.section AS class_name, p.name AS parent_name, p.phone AS parent_phone, rt.name AS route_name,
 		(SELECT COALESCE(SUM(amount),0) FROM fees f WHERE f.student_id=s.id AND f.status='unpaid') AS fee_due,
-		(SELECT ROUND(100.0*SUM(status!='absent')/COUNT(*),1) FROM attendance a WHERE a.student_id=s.id) AS attendance_pct
+		(SELECT ROUND(100.0*COUNT(*) FILTER (WHERE status<>'absent')/NULLIF(COUNT(*),0),1)::float8 FROM attendance a WHERE a.student_id=s.id) AS attendance_pct
 		FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users p ON p.id=s.parent_id LEFT JOIN routes rt ON rt.id=s.route_id
-		WHERE (?=0 OR s.class_id=?) AND (s.name LIKE ? OR s.admission_no LIKE ? OR COALESCE(p.name,'') LIKE ?)`+scope+`
+		WHERE (?=0 OR s.class_id=?) AND (s.name ILIKE ? OR s.admission_no ILIKE ? OR COALESCE(p.name,'') ILIKE ?)`+scope+`
 		ORDER BY c.name, c.section, s.name`, append([]any{classID, classID, q, q, q}, scopeArgs...)...)
 	if err != nil {
 		serverError(w, err)
@@ -443,13 +492,13 @@ func (a *App) handleSaveStudent(w http.ResponseWriter, r *http.Request, u *User)
 			return
 		}
 		hash, _ := hashPassword(pr.Password)
-		res, err := a.db.Exec(`INSERT INTO users(name,email,phone,whatsapp,role,language,password_hash,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		parentID, err := a.db.InsertID(`INSERT INTO users(name,email,phone,whatsapp,role,language,password_hash,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 			pr.Name, pr.Email, pr.Phone, pr.WhatsApp, "parent", pr.Language, hash, now())
 		if err != nil {
 			errJSON(w, 409, "Could not create parent (email may already exist)")
 			return
 		}
-		req.ParentID, _ = res.LastInsertId()
+		req.ParentID = parentID
 	}
 	id := pathID(r, "id")
 	if req.AdmissionNo == "" {
@@ -460,15 +509,11 @@ func (a *App) handleSaveStudent(w http.ResponseWriter, r *http.Request, u *User)
 		_, err = a.db.Exec(`UPDATE students SET admission_no=?,name=?,class_id=?,parent_id=?,route_id=?,gender=?,dob=? WHERE id=?`,
 			req.AdmissionNo, req.Name, req.ClassID, nullID(req.ParentID), nullID(req.RouteID), req.Gender, req.DOB, id)
 	} else {
-		var res interface{ LastInsertId() (int64, error) }
-		res, err = a.db.Exec(`INSERT INTO students(admission_no,name,class_id,parent_id,route_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		id, err = a.db.InsertID(`INSERT INTO students(admission_no,name,class_id,parent_id,route_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 			req.AdmissionNo, req.Name, req.ClassID, nullID(req.ParentID), nullID(req.RouteID), req.Gender, req.DOB, now())
-		if err == nil {
-			id, _ = res.LastInsertId()
-		}
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			errJSON(w, 409, "Admission number already exists")
 			return
 		}

@@ -139,11 +139,12 @@ func (a *App) handleAttendanceReport(w http.ResponseWriter, r *http.Request, u *
 	classID := queryInt(r, "class_id")
 	scope, scopeArgs := a.scopeSQL(u, PStudentsView, "s.class_id")
 	rows, err := a.queryMaps(`SELECT s.id, s.name, s.admission_no, c.name||' - '||c.section AS class_name,
-		SUM(a.status='present') AS present, SUM(a.status='absent') AS absent, SUM(a.status='late') AS late, COUNT(a.id) AS total,
-		ROUND(100.0*SUM(a.status!='absent')/MAX(COUNT(a.id),1),1) AS percent
+		COUNT(a.id) FILTER (WHERE a.status='present') AS present, COUNT(a.id) FILTER (WHERE a.status='absent') AS absent,
+		COUNT(a.id) FILTER (WHERE a.status='late') AS late, COUNT(a.id) AS total,
+		ROUND(100.0*COUNT(a.id) FILTER (WHERE a.status<>'absent')/GREATEST(COUNT(a.id),1),1)::float8 AS percent
 		FROM students s LEFT JOIN classes c ON c.id=s.class_id
 		LEFT JOIN attendance a ON a.student_id=s.id AND a.date BETWEEN ? AND ?
-		WHERE (?=0 OR s.class_id=?)`+scope+` GROUP BY s.id ORDER BY percent, s.name`, append([]any{from, to, classID, classID}, scopeArgs...)...)
+		WHERE (?=0 OR s.class_id=?)`+scope+` GROUP BY s.id, c.id ORDER BY percent, s.name`, append([]any{from, to, classID, classID}, scopeArgs...)...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -418,7 +419,7 @@ func (a *App) handleListExams(w http.ResponseWriter, r *http.Request, u *User) {
 	scope, scopeArgs := a.scopeSQL(u, PAcademic, "e.class_id")
 	rows, err := a.queryMaps(`SELECT e.*, c.name||' - '||c.section AS class_name,
 		(SELECT COUNT(*) FROM results x WHERE x.exam_id=e.id) AS result_count,
-		(SELECT ROUND(AVG(marks),1) FROM results x WHERE x.exam_id=e.id) AS average
+		(SELECT ROUND(AVG(marks)::numeric,1)::float8 FROM results x WHERE x.exam_id=e.id) AS average
 		FROM exams e JOIN classes c ON c.id=e.class_id WHERE (?=0 OR e.class_id=?)`+scope+`
 		ORDER BY e.exam_date DESC`, append([]any{classID, classID}, scopeArgs...)...)
 	if err != nil {

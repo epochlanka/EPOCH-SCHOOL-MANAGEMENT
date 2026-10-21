@@ -77,13 +77,12 @@ func (a *App) handleCreatePickup(w http.ResponseWriter, r *http.Request, u *User
 		errJSON(w, 400, "Describe the change")
 		return
 	}
-	res, err := a.db.Exec(`INSERT INTO pickup_requests(student_id,parent_id,date,kind,collector_name,collector_relation,collector_phone,pickup_time,note,status,created_at)
+	id, err := a.db.InsertID(`INSERT INTO pickup_requests(student_id,parent_id,date,kind,collector_name,collector_relation,collector_phone,pickup_time,note,status,created_at)
 		VALUES(?,?,?,?,?,?,?,?,?,'pending',?)`, req.StudentID, u.ID, req.Date, req.Kind, req.Name, req.Relation, req.Phone, req.At, req.Note, now())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	id, _ := res.LastInsertId()
 	var student, class string
 	a.db.QueryRow(`SELECT s.name, COALESCE(c.name||' - '||c.section,'') FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE s.id=?`, req.StudentID).Scan(&student, &class)
 	a.notify.NotifyEach("pickup", a.pickupStaff(req.StudentID), []string{"app"}, func(lang string) (string, string) {

@@ -158,7 +158,7 @@ func (a *App) handleListLeave(w http.ResponseWriter, r *http.Request, u *User) {
 	status := r.URL.Query().Get("status")
 	mine := r.URL.Query().Get("mine") == "1" || !hasPerm(u.Role, PLeaveApprove)
 	q := `SELECT l.*, u.name, u.role, rv.name AS reviewer_name,
-		CAST(julianday(l.to_date)-julianday(l.from_date)+1 AS INTEGER) AS days
+		(l.to_date::date - l.from_date::date + 1) AS days
 		FROM leave_requests l JOIN users u ON u.id=l.user_id LEFT JOIN users rv ON rv.id=l.reviewed_by
 		WHERE (?='' OR l.status=?)`
 	args := []any{status, status}
@@ -204,13 +204,12 @@ func (a *App) handleApplyLeave(w http.ResponseWriter, r *http.Request, u *User) 
 		errJSON(w, 409, "You already have a leave request for these dates")
 		return
 	}
-	res, err := a.db.Exec(`INSERT INTO leave_requests(user_id,leave_type,from_date,to_date,reason,created_at) VALUES(?,?,?,?,?,?)`,
+	id, err := a.db.InsertID(`INSERT INTO leave_requests(user_id,leave_type,from_date,to_date,reason,created_at) VALUES(?,?,?,?,?,?)`,
 		u.ID, req.Type, req.From, req.To, strings.TrimSpace(req.Reason), now())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	id, _ := res.LastInsertId()
 	approvers, _ := a.queryIDs(`SELECT id FROM users WHERE active=1 AND id<>? AND role IN ('admin','principal','vice_principal')
 		UNION SELECT s.head_id FROM sections s JOIN classes c ON c.section_id=s.id
 		WHERE c.teacher_id=? OR c.id IN (SELECT class_id FROM class_subjects WHERE teacher_id=?)`, u.ID, u.ID, u.ID)
@@ -480,12 +479,13 @@ func (a *App) handleListSubstitutions(w http.ResponseWriter, r *http.Request, u 
 	for _, row := range rows {
 		row["time"] = cfg.periodTime(int(row["period"].(int64)))
 	}
-	away := []map[string]any{}
+	var awayIDs []int64
 	for id := range a.unavailableTeachers(date) {
-		if m, err := a.queryOne(`SELECT id,name,role FROM users WHERE id=?`, id); err == nil {
-			m["role_label"] = roleLabel(m["role"].(string))
-			away = append(away, m)
-		}
+		awayIDs = append(awayIDs, id)
+	}
+	away, _ := a.queryMaps(`SELECT id,name,role FROM users WHERE id IN (`+placeholders(len(awayIDs))+`) ORDER BY name`, int64Args(awayIDs)...)
+	for _, m := range away {
+		m["role_label"] = roleLabel(m["role"].(string))
 	}
 	writeJSON(w, 200, map[string]any{"date": date, "school_day": cfg.schoolDay(date) > 0, "rows": rows, "away": away})
 }
@@ -567,29 +567,49 @@ func (a *App) handleWorkspace(w http.ResponseWriter, r *http.Request, u *User) {
 	t := today()
 	cfg := a.timetableConfig()
 	day := cfg.schoolDay(t)
-	att, err := a.queryOne(`SELECT status, check_in, check_out FROM staff_attendance WHERE user_id=? AND date=?`, u.ID, t)
+	var (
+		att                                  map[string]any
+		lessons, relief, upcoming, myClasses []map[string]any
+		onLeave                              bool
+		err                                  error
+	)
+	// The sections of the page are independent, so they are fetched side by side.
+	parallel(
+		func() {
+			att, err = a.queryOne(`SELECT status, check_in, check_out FROM staff_attendance WHERE user_id=? AND date=?`, u.ID, t)
+		},
+		func() {
+			lessons, _ = a.queryMaps(`SELECT t.period, s.name AS subject_name, c.name||' - '||c.section AS class_name,
+				(SELECT sb.name FROM substitutions x JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? AND x.class_id=t.class_id AND x.period=t.period) AS covered_by
+				FROM timetable t JOIN subjects s ON s.id=t.subject_id JOIN classes c ON c.id=t.class_id
+				WHERE t.teacher_id=? AND t.day=? ORDER BY t.period`, t, u.ID, day)
+		},
+		func() {
+			relief, _ = a.queryMaps(`SELECT x.period, s.name AS subject_name, c.name||' - '||c.section AS class_name, ab.name AS absent_name
+				FROM substitutions x JOIN classes c ON c.id=x.class_id LEFT JOIN subjects s ON s.id=x.subject_id LEFT JOIN users ab ON ab.id=x.absent_teacher_id
+				WHERE x.substitute_id=? AND x.date=? ORDER BY x.period`, u.ID, t)
+		},
+		func() {
+			upcoming, _ = a.queryMaps(`SELECT x.date, x.period, s.name AS subject_name, c.name||' - '||c.section AS class_name
+				FROM substitutions x JOIN classes c ON c.id=x.class_id LEFT JOIN subjects s ON s.id=x.subject_id
+				WHERE x.substitute_id=? AND x.date>? ORDER BY x.date, x.period LIMIT 20`, u.ID, t)
+		},
+		func() {
+			myClasses, _ = a.queryMaps(`SELECT c.id, c.name||' - '||c.section AS label FROM classes c WHERE c.teacher_id=?`, u.ID)
+		},
+		func() { onLeave = a.staffOnLeave(t)[u.ID] },
+	)
 	if err != nil {
 		att = map[string]any{"status": "", "check_in": "", "check_out": ""}
 	}
-	lessons, _ := a.queryMaps(`SELECT t.period, s.name AS subject_name, c.name||' - '||c.section AS class_name,
-		(SELECT sb.name FROM substitutions x JOIN users sb ON sb.id=x.substitute_id WHERE x.date=? AND x.class_id=t.class_id AND x.period=t.period) AS covered_by
-		FROM timetable t JOIN subjects s ON s.id=t.subject_id JOIN classes c ON c.id=t.class_id
-		WHERE t.teacher_id=? AND t.day=? ORDER BY t.period`, t, u.ID, day)
-	relief, _ := a.queryMaps(`SELECT x.period, s.name AS subject_name, c.name||' - '||c.section AS class_name, ab.name AS absent_name
-		FROM substitutions x JOIN classes c ON c.id=x.class_id LEFT JOIN subjects s ON s.id=x.subject_id LEFT JOIN users ab ON ab.id=x.absent_teacher_id
-		WHERE x.substitute_id=? AND x.date=? ORDER BY x.period`, u.ID, t)
 	for _, list := range [][]map[string]any{lessons, relief} {
 		for _, row := range list {
 			row["time"] = cfg.periodTime(int(row["period"].(int64)))
 		}
 	}
-	upcoming, _ := a.queryMaps(`SELECT x.date, x.period, s.name AS subject_name, c.name||' - '||c.section AS class_name
-		FROM substitutions x JOIN classes c ON c.id=x.class_id LEFT JOIN subjects s ON s.id=x.subject_id
-		WHERE x.substitute_id=? AND x.date>? ORDER BY x.date, x.period LIMIT 20`, u.ID, t)
-	myClasses, _ := a.queryMaps(`SELECT c.id, c.name||' - '||c.section AS label FROM classes c WHERE c.teacher_id=?`, u.ID)
 	writeJSON(w, 200, map[string]any{
 		"today": t, "school_day": day > 0, "day_name": time.Now().Format("Monday"),
 		"attendance": att, "lessons": lessons, "relief": relief, "upcoming_relief": upcoming,
-		"my_classes": myClasses, "on_leave": a.staffOnLeave(t)[u.ID], "late_after": a.setting("staff_late_after"),
+		"my_classes": myClasses, "on_leave": onLeave, "late_after": a.setting("staff_late_after"),
 	})
 }

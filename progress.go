@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -41,35 +42,48 @@ func (a *App) handleProgress(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 404, "Student not found")
 		return
 	}
-	lang := a.userLanguage(u.ID)
 	t := today()
 	ago := func(d int) string { return time.Now().AddDate(0, 0, -d).Format(dateLayout) }
 
-	// Attendance: last 30 days against the 30 before.
-	attPct := func(from, to string) (float64, float64) {
-		total := a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND date BETWEEN ? AND ?`, sid, from, to)
-		if total == 0 {
-			return -1, 0
-		}
-		in := a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND date BETWEEN ? AND ? AND status!='absent'`, sid, from, to)
-		return pct(in * 100 / total), total
-	}
-	att30, days30 := attPct(ago(30), t)
-	attPrev, _ := attPct(ago(60), ago(31))
-	attendance := map[string]any{
-		"percent": att30, "previous": attPrev, "days": days30,
-		"absent": a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND date BETWEEN ? AND ? AND status='absent'`, sid, ago(30), t),
-		"late":   a.scalar(`SELECT COUNT(*) FROM attendance WHERE student_id=? AND date BETWEEN ? AND ? AND status='late'`, sid, ago(30), t),
-	}
-
-	// Results per subject: latest and previous published exam.
-	rows, err := a.db.Query(`SELECT e.subject, e.title, e.exam_date, e.max_marks, x.marks, x.remarks,
-		(SELECT AVG(y.marks) FROM results y WHERE y.exam_id=e.id)
-		FROM results x JOIN exams e ON e.id=x.exam_id WHERE x.student_id=? AND e.published=1 ORDER BY e.exam_date DESC`, sid)
+	var (
+		lang                                         string
+		total30, in30, absent30, late30, totalP, inP float64
+		rows                                         *sql.Rows
+		homework                                     []map[string]any
+	)
+	// These lookups are independent, so they run side by side.
+	parallel(
+		func() { lang = a.userLanguage(u.ID) },
+		func() {
+			// Attendance: last 30 days against the 30 before.
+			a.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE date BETWEEN ? AND ?), COUNT(*) FILTER (WHERE date BETWEEN ? AND ? AND status<>'absent'),
+				COUNT(*) FILTER (WHERE date BETWEEN ? AND ? AND status='absent'), COUNT(*) FILTER (WHERE date BETWEEN ? AND ? AND status='late'),
+				COUNT(*) FILTER (WHERE date BETWEEN ? AND ?), COUNT(*) FILTER (WHERE date BETWEEN ? AND ? AND status<>'absent')
+				FROM attendance WHERE student_id=?`, ago(30), t, ago(30), t, ago(30), t, ago(30), t, ago(60), ago(31), ago(60), ago(31), sid).
+				Scan(&total30, &in30, &absent30, &late30, &totalP, &inP)
+		},
+		func() {
+			// Results per subject: latest and previous published exam.
+			rows, err = a.db.Query(`SELECT e.subject, e.title, e.exam_date, e.max_marks, x.marks, x.remarks,
+				(SELECT AVG(y.marks) FROM results y WHERE y.exam_id=e.id)
+				FROM results x JOIN exams e ON e.id=x.exam_id WHERE x.student_id=? AND e.published=1 ORDER BY e.exam_date DESC`, sid)
+		},
+		func() {
+			homework, _ = a.queryMaps(`SELECT subject, title, due_date FROM homework WHERE class_id=? AND due_date>=? ORDER BY due_date LIMIT 10`, student["class_id"], t)
+		},
+	)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
+	attPct := func(total, in float64) float64 {
+		if total == 0 {
+			return -1
+		}
+		return pct(in * 100 / total)
+	}
+	att30, attPrev := attPct(total30, in30), attPct(totalP, inP)
+	attendance := map[string]any{"percent": att30, "previous": attPrev, "days": total30, "absent": absent30, "late": late30}
 	bySubject := map[string]*subjectProgress{}
 	var order []string
 	remarks := []map[string]string{}
@@ -107,8 +121,6 @@ func (a *App) handleProgress(w http.ResponseWriter, r *http.Request, u *User) {
 	}
 	sort.Strings(strengths)
 	sort.Strings(focus)
-
-	homework, _ := a.queryMaps(`SELECT subject, title, due_date FROM homework WHERE class_id=? AND due_date>=? ORDER BY due_date LIMIT 10`, student["class_id"], t)
 
 	// Rule-based summary and next steps (always available, in the reader's language).
 	var summary []string
@@ -186,7 +198,7 @@ Use only the facts given; do not invent marks, events or diagnoses. Subject name
 			cancel()
 			if err == nil && text != "" {
 				cached = text
-				a.db.Exec(`INSERT OR REPLACE INTO progress_summaries(student_id,language,date,text) VALUES(?,?,?,?)`, sid, lang, t, text)
+				a.db.Exec(`INSERT INTO progress_summaries(student_id,language,date,text) VALUES(?,?,?,?) ON CONFLICT(student_id,language,date) DO UPDATE SET text=excluded.text`, sid, lang, t, text)
 			} else if err != nil {
 				out["ai_error"] = err.Error()
 			}

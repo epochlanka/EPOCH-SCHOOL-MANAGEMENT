@@ -9,7 +9,8 @@ import (
 
 type Config struct {
 	Addr         string
-	DBPath       string // set only when DB_PATH is given; otherwise chosen in Settings (see storage.go)
+	DatabaseURL  string // PostgreSQL connection URL
+	DBPath       string // an SQLite database from an earlier version, imported on first start (see importsqlite.go)
 	ConfigFile   string
 	TZ           string
 	CountryCode  string
@@ -58,6 +59,7 @@ func env(key, def string) string {
 func loadConfig() Config {
 	return Config{
 		Addr:         env("ADDR", ":8080"),
+		DatabaseURL:  env("DATABASE_URL", "postgres:///epoch"),
 		DBPath:       env("DB_PATH", ""),
 		ConfigFile:   env("EPOCH_CONFIG", filepath.Join(appDataDir(), "config.json")),
 		TZ:           env("TZ", "Asia/Colombo"),
