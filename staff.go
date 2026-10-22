@@ -147,11 +147,23 @@ func (a *App) handleCheckIn(w http.ResponseWriter, r *http.Request, u *User) {
 
 // ---------- Leave ----------
 
+// leaveScopeSQL limits the leave requests a head of section may see and decide to
+// teachers working in their section. Other approvers cover all staff.
+func (a *App) leaveScopeSQL(u *User, col string) (string, []any) {
+	if u.Role != "section_head" {
+		return "", nil
+	}
+	return " AND " + col + ` IN (SELECT c.teacher_id FROM classes c JOIN sections s ON s.id=c.section_id WHERE s.head_id=?
+		UNION SELECT cs.teacher_id FROM class_subjects cs JOIN classes c ON c.id=cs.class_id JOIN sections s ON s.id=c.section_id WHERE s.head_id=?)
+		AND ` + col + ` IN (SELECT id FROM users WHERE role IN ('class_teacher','subject_teacher'))`, []any{u.ID, u.ID}
+}
+
 func (a *App) pendingLeaveCount(u *User) float64 {
 	if !hasPerm(u.Role, PLeaveApprove) {
 		return 0
 	}
-	return a.scalar(`SELECT COUNT(*) FROM leave_requests WHERE status='pending' AND user_id<>?`, u.ID)
+	scope, args := a.leaveScopeSQL(u, "user_id")
+	return a.scalar(`SELECT COUNT(*) FROM leave_requests WHERE status='pending' AND user_id<>?`+scope, append([]any{u.ID}, args...)...)
 }
 
 func (a *App) handleListLeave(w http.ResponseWriter, r *http.Request, u *User) {
@@ -165,6 +177,10 @@ func (a *App) handleListLeave(w http.ResponseWriter, r *http.Request, u *User) {
 	if mine {
 		q += ` AND l.user_id=?`
 		args = append(args, u.ID)
+	} else {
+		scope, scopeArgs := a.leaveScopeSQL(u, "l.user_id")
+		q += scope
+		args = append(args, scopeArgs...)
 	}
 	rows, err := a.queryMaps(q+` ORDER BY CASE l.status WHEN 'pending' THEN 0 ELSE 1 END, l.from_date DESC LIMIT 300`, args...)
 	if err != nil {
@@ -246,6 +262,15 @@ func (a *App) handleLeaveDecision(w http.ResponseWriter, r *http.Request, u *Use
 	}
 	if prev == "cancelled" {
 		errJSON(w, 400, "This request was cancelled by the staff member")
+		return
+	}
+	if prev == req.Status {
+		errJSON(w, 400, "This request is already "+prev)
+		return
+	}
+	if scope, args := a.leaveScopeSQL(u, "user_id"); scope != "" &&
+		a.scalar(`SELECT COUNT(*) FROM leave_requests WHERE id=?`+scope, append([]any{id}, args...)...) == 0 {
+		errJSON(w, 403, "You can only decide leave for teachers in your section")
 		return
 	}
 	a.db.Exec(`UPDATE leave_requests SET status=?, review_note=?, reviewed_by=?, reviewed_at=? WHERE id=?`, req.Status, strings.TrimSpace(req.Note), u.ID, now(), id)

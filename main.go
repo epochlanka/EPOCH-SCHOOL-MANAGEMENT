@@ -1,6 +1,6 @@
 // Epoch School Communication & Management System.
 // A single Go binary that serves the web UI and JSON API, stores data in PostgreSQL,
-// delivers notifications over App / SMS / WhatsApp and integrates Claude for AI features.
+// delivers notifications over App / SMS / WhatsApp and integrates Google Gemini for AI features.
 package main
 
 import (
@@ -264,7 +264,7 @@ func (a *App) routes() http.Handler {
 	// Parent / student portal
 	h("GET /api/portal/{id}", anyone, a.handlePortal)
 
-	// AI (Claude)
+	// AI (Google Gemini)
 	h("GET /api/ai/status", anyone, a.handleAIStatus)
 	h("POST /api/ai/compose", PAICompose, a.handleAICompose)
 	h("POST /api/ai/translate", anyone, a.handleAITranslate)

@@ -137,7 +137,7 @@ PAGES.timetable = async (el) => {
         { name: 'teacher_id', label: 'Teacher', type: 'select', full: true, options: [[0, '— Not assigned —'], ...teachers.map((t) => [t.id, `${t.name} (${t.role_label}) · ${t.periods} periods`])] },
         { name: 'periods_per_week', label: 'Periods per week', type: 'number', min: 1, value: r.periods_per_week || 3 },
       ], r) : '<p>Add subjects in the "Subject list" tab first.</p>',
-      onSubmit: async (v) => { await POST('/api/class-subjects', { class_id: Number($('#ac', box).value), subject_id: Number(v.subject_id), teacher_id: Number(v.teacher_id), periods_per_week: Number(v.periods_per_week) }); toast('Saved — generate the timetable to apply changes', 'success'); load(); },
+      onSubmit: async (v) => { const res = await POST('/api/class-subjects', { class_id: Number($('#ac', box).value), subject_id: Number(v.subject_id), teacher_id: Number(v.teacher_id), periods_per_week: Number(v.periods_per_week) }); toast(res.removed_periods ? `Saved — ${res.removed_periods} period(s) clashed with the teacher's other classes and were taken off the timetable. Generate the timetable to place them again.` : 'Saved — generate the timetable to apply changes', res.removed_periods ? 'error' : 'success'); load(); },
     });
     $('#ac', box).onchange = load;
     $('#aAdd', box).onclick = () => form();
@@ -339,7 +339,7 @@ PAGES.admissions = async (el) => {
       body: formFields([
         { name: 'class_id', label: 'Class', type: 'select', required: true, full: true, options: classOptions() },
         { name: 'parent_email', label: 'Parent login email', type: 'email', required: true, value: r.email, full: true, hint: 'If a parent account with this email exists (e.g. a sibling), the child is linked to it.' },
-        { name: 'parent_password', label: 'Parent password (new accounts)', value: '' },
+        { name: 'parent_password', label: 'Parent password (new accounts, min 8)', value: '' },
         { name: 'welcome', label: 'Send a welcome message to the parent', type: 'checkbox', value: true },
       ]),
       onSubmit: async (v) => { await POST(`/api/admissions/${r.id}/enrol`, { ...v, class_id: Number(v.class_id) }); toast(r.child_name + ' enrolled', 'success'); load(); },

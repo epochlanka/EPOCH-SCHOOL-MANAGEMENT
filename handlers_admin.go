@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -102,9 +101,11 @@ func (a *App) handleDashboard(w http.ResponseWriter, r *http.Request, u *User) {
 				(SELECT 1 FROM leave_requests l WHERE l.user_id=u.id AND l.status='approved' AND ? BETWEEN l.from_date AND l.to_date)) ORDER BY u.name`, t, t, t)
 		},
 		func() {
+			scope, args := a.leaveScopeSQL(u, "l.user_id")
 			pending, _ = a.queryMaps(`SELECT l.id, l.leave_type, l.from_date, l.to_date, l.reason, u.name, u.role,
 				(l.to_date::date - l.from_date::date + 1) AS days
-				FROM leave_requests l JOIN users u ON u.id=l.user_id WHERE l.status='pending' AND l.user_id<>? ORDER BY l.from_date LIMIT 10`, u.ID)
+				FROM leave_requests l JOIN users u ON u.id=l.user_id WHERE l.status='pending' AND l.user_id<>?`+scope+` ORDER BY l.from_date LIMIT 10`,
+				append([]any{u.ID}, args...)...)
 		},
 	)
 	if err := errors.Join(errCounts, errChannels); err != nil {
@@ -204,11 +205,8 @@ func (req *userReq) validate(creating bool) string {
 	if !validRole(req.Role) {
 		return "Invalid role"
 	}
-	if creating && len(req.Password) < 6 {
-		return "Password must be at least 6 characters"
-	}
-	if !creating && req.Password != "" && len(req.Password) < 6 {
-		return "Password must be at least 6 characters"
+	if (creating || req.Password != "") && len(req.Password) < 8 {
+		return "Password must be at least 8 characters"
 	}
 	if !validLanguage(req.Language) {
 		req.Language = "English"
@@ -305,6 +303,15 @@ func (a *App) handleDeleteUser(w http.ResponseWriter, r *http.Request, u *User) 
 	id := pathID(r, "id")
 	if id == u.ID {
 		errJSON(w, 400, "You cannot delete your own account")
+		return
+	}
+	var role string
+	if err := a.db.QueryRow(`SELECT role FROM users WHERE id=?`, id).Scan(&role); err != nil {
+		errJSON(w, 404, "User not found")
+		return
+	}
+	if role == "admin" && u.Role != "admin" {
+		errJSON(w, 403, "Only a System Admin can delete admin accounts")
 		return
 	}
 	if _, err := a.db.Exec(`DELETE FROM users WHERE id=?`, id); err != nil {
@@ -482,39 +489,62 @@ func (a *App) handleSaveStudent(w http.ResponseWriter, r *http.Request, u *User)
 		errJSON(w, 400, "Student name and class are required")
 		return
 	}
+	if req.ParentID > 0 {
+		var role string
+		a.db.QueryRow(`SELECT role FROM users WHERE id=?`, req.ParentID).Scan(&role)
+		if role != "parent" {
+			errJSON(w, 400, "The selected parent account is not a parent")
+			return
+		}
+	}
+	// The new parent account and the student are saved together, or not at all.
+	tx, err := a.db.Begin()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback()
 	if req.ParentID == 0 && strings.TrimSpace(req.ParentEmail) != "" {
 		pr := userReq{Name: req.ParentName, Email: req.ParentEmail, Phone: req.ParentPhone, Role: "parent", Password: req.ParentPassword, Language: req.ParentLanguage}
-		if pr.Password == "" {
-			pr.Password = newToken()[:10]
-		}
 		if msg := pr.validate(true); msg != "" {
 			errJSON(w, 400, "Parent: "+msg)
 			return
 		}
-		hash, _ := hashPassword(pr.Password)
-		parentID, err := a.db.InsertID(`INSERT INTO users(name,email,phone,whatsapp,role,language,password_hash,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		hash, err := hashPassword(pr.Password)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		parentID, err := tx.InsertID(`INSERT INTO users(name,email,phone,whatsapp,role,language,password_hash,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 			pr.Name, pr.Email, pr.Phone, pr.WhatsApp, "parent", pr.Language, hash, now())
 		if err != nil {
-			errJSON(w, 409, "Could not create parent (email may already exist)")
+			if isUniqueViolation(err) {
+				errJSON(w, 409, "An account with the parent's email already exists; choose it as the existing parent instead")
+				return
+			}
+			serverError(w, err)
 			return
 		}
 		req.ParentID = parentID
 	}
 	id := pathID(r, "id")
+	req.AdmissionNo = strings.TrimSpace(req.AdmissionNo)
 	if req.AdmissionNo == "" {
-		req.AdmissionNo = fmt.Sprintf("EP%04d", 1001+int(a.scalar(`SELECT COALESCE(MAX(id),0) FROM students`)))
+		req.AdmissionNo = nextAdmissionNo(tx)
 	}
-	var err error
 	if id > 0 {
-		_, err = a.db.Exec(`UPDATE students SET admission_no=?,name=?,class_id=?,parent_id=?,route_id=?,gender=?,dob=? WHERE id=?`,
+		_, err = tx.Exec(`UPDATE students SET admission_no=?,name=?,class_id=?,parent_id=?,route_id=?,gender=?,dob=? WHERE id=?`,
 			req.AdmissionNo, req.Name, req.ClassID, nullID(req.ParentID), nullID(req.RouteID), req.Gender, req.DOB, id)
 	} else {
-		id, err = a.db.InsertID(`INSERT INTO students(admission_no,name,class_id,parent_id,route_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		id, err = tx.InsertID(`INSERT INTO students(admission_no,name,class_id,parent_id,route_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 			req.AdmissionNo, req.Name, req.ClassID, nullID(req.ParentID), nullID(req.RouteID), req.Gender, req.DOB, now())
+	}
+	if err == nil {
+		err = tx.Commit()
 	}
 	if err != nil {
 		if isUniqueViolation(err) {
-			errJSON(w, 409, "Admission number already exists")
+			errJSON(w, 409, "Admission number "+req.AdmissionNo+" is already in use")
 			return
 		}
 		serverError(w, err)

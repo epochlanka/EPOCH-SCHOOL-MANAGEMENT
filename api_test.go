@@ -263,6 +263,71 @@ func TestAPIOnPostgres(t *testing.T) {
 		t.Errorf("duplicate email (any case) should be 409, got %d", code)
 	}
 	admin.ok("PUT", "/api/settings", map[string]string{"school_name": "Epoch Test School"})
+
+	// Only a System Admin can delete an admin account.
+	adminID := app.id(t, `SELECT id FROM users WHERE email='admin@epoch.lk'`)
+	if code, _ := principal.do("DELETE", fmt.Sprintf("/api/users/%d", adminID), nil); code != 403 {
+		t.Errorf("principal deleting the admin should be 403, got %d", code)
+	}
+	// A fee is recorded as paid (and a receipt sent) only once.
+	if code, _ := acc.do("POST", fmt.Sprintf("/api/fees/%d/pay", fee), nil); code != 404 && code != 409 {
+		t.Errorf("paying a paid fee again should be refused, got %d", code)
+	}
+	// Marks can only be entered for students in the exam's class.
+	grade6 := app.id(t, `SELECT id FROM students WHERE admission_no='EP1001'`)
+	if code, _ := principal.do("POST", fmt.Sprintf("/api/exams/%d/results", exam), map[string]any{
+		"records": []map[string]any{{"student_id": grade6, "marks": 50}}}); code != 400 {
+		t.Errorf("marks for a student outside the class should be 400, got %d", code)
+	}
+	// A head of section decides leave only for teachers in their section, and only once.
+	principal.ok("POST", "/api/leave", map[string]string{"leave_type": "casual", "from_date": time.Now().AddDate(0, 0, 30).Format(dateLayout)})
+	principalLeave := app.id(t, `SELECT l.id FROM leave_requests l JOIN users u ON u.id=l.user_id WHERE u.email='principal@epoch.lk' ORDER BY l.id DESC LIMIT 1`)
+	head := newClient(t, srv.URL, "middlehead@epoch.lk")
+	if code, _ := head.do("POST", fmt.Sprintf("/api/leave/%d/decision", principalLeave), map[string]string{"status": "approved"}); code != 403 {
+		t.Errorf("head of section approving the principal's leave should be 403, got %d", code)
+	}
+	if code, _ := principal.do("POST", fmt.Sprintf("/api/leave/%d/decision", leave), map[string]string{"status": "approved"}); code != 400 {
+		t.Errorf("approving an approved request again should be 400, got %d", code)
+	}
+	// Automatic admission numbers continue after hand-typed ones.
+	principal.ok("POST", "/api/students", map[string]any{"name": "Typed Number", "class_id": class8, "admission_no": "EP5000"})
+	principal.ok("POST", "/api/students", map[string]any{"name": "Auto Number", "class_id": class8})
+	var autoNo string
+	app.db.QueryRow(`SELECT admission_no FROM students WHERE name='Auto Number'`).Scan(&autoNo)
+	if autoNo != "EP5001" {
+		t.Errorf("next admission number should be EP5001, got %q", autoNo)
+	}
+	// A new parent needs a password, and nothing is saved without one.
+	if code, _ := principal.do("POST", "/api/students", map[string]any{"name": "No Password Kid", "class_id": class8,
+		"parent_email": "nopass@example.lk", "parent_name": "No Pass"}); code != 400 {
+		t.Errorf("new parent without a password should be 400, got %d", code)
+	}
+	if n := app.scalar(`SELECT COUNT(*) FROM users WHERE email='nopass@example.lk'`); n != 0 {
+		t.Errorf("parent account was created although the student was not saved")
+	}
+	// The AI assistant's data tools follow the user's class scope and permissions.
+	riznaUser := &User{ID: rizna, Role: "class_teacher"}
+	for _, tl := range app.assistantTools() {
+		switch tl.def.Name {
+		case "find_students":
+			out, err := tl.run(riznaUser, json.RawMessage(`{"query":""}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, row := range out.([]map[string]any) {
+				if row["class"] != "Grade 8 - A" {
+					t.Errorf("class teacher's AI student search returned %v from %v", row["name"], row["class"])
+				}
+				if _, ok := row["fee_balance"]; ok {
+					t.Errorf("class teacher's AI student search should not include fee balances")
+				}
+			}
+		case "get_unpaid_fees", "get_school_overview":
+			if tl.availableTo(riznaUser) {
+				t.Errorf("%s should not be offered to a class teacher", tl.def.Name)
+			}
+		}
+	}
 	admin.ok("GET", "/api/reports/communications?channel=app", nil)
 
 	// Re-read everything after the changes.

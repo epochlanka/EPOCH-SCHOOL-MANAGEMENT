@@ -194,7 +194,7 @@ PAGES.compose = async (el) => {
         <form id="aiForm"><div class="field"><textarea class="input" name="prompt" rows="2" placeholder="e.g. School closed on Friday for the annual sports meet, parents invited at 2pm"></textarea></div>
         <div class="row"><select class="input" name="tone" style="width:auto"><option>warm and professional</option><option>formal</option><option>urgent</option><option>celebratory</option><option>gentle reminder</option></select>
         <select class="input" name="language" style="width:auto"><option>English</option><option>Sinhala</option><option>Tamil</option><option value="English, followed by a Sinhala and a Tamil translation">Trilingual (EN/SI/TA)</option></select>
-        <button class="btn ai right" type="submit">${icon('sparkle')} Generate</button></div></form></div>` : `<div class="card card-b small muted">${icon('sparkle', '')} AI writing is off. Add <code>ANTHROPIC_API_KEY</code> to the server's .env to enable it.</div>`}
+        <button class="btn ai right" type="submit">${icon('sparkle')} Generate</button></div></form></div>` : `<div class="card card-b small muted">${icon('sparkle', '')} AI writing is off. Add <code>GEMINI_API_KEY</code> to the server's .env to enable it.</div>`}
       <form class="card" id="sendForm"><div class="card-h"><h3>Compose</h3></div><div class="card-b">
         <div class="form-grid">
           ${field({ name: 'audience', label: 'Send to', type: 'select', options: all ? [['parents', 'All parents'], ['all', 'Everyone'], ['teachers', 'All staff'], ['teaching', 'All teachers'], ['students', 'All students'], ['section', 'A section (parents + students)'], ['class', 'A class (parents + students)'], ['class_parents', 'A class (parents only)'], ['route', 'A bus route'], ['user', 'One person']] : [['class_parents', 'My class (parents only)'], ['class', 'My class (parents + students)'], ['user', 'One person']] })}
@@ -284,7 +284,7 @@ PAGES.compose = async (el) => {
 /* ---------- Messages & AI ---------- */
 PAGES.messages = async (el) => { await messenger(el, location.hash.split('/')[2]); };
 PAGES.ai = async (el) => {
-  if (!S.aiEnabled) { el.innerHTML = `<div class="card empty"><div class="ai-bot" style="margin:0 auto 12px">${icon('sparkle')}</div><b>Epoch AI is not enabled yet</b><p>Add <code>ANTHROPIC_API_KEY=…</code> to the <code>.env</code> file on the server and restart it.</p></div>`; return; }
+  if (!S.aiEnabled) { el.innerHTML = `<div class="card empty"><div class="ai-bot" style="margin:0 auto 12px">${icon('sparkle')}</div><b>Epoch AI is not enabled yet</b><p>Add <code>GEMINI_API_KEY=…</code> to the <code>.env</code> file on the server and restart it.</p></div>`; return; }
   aiChat(el, ['Give me a summary of the school today', 'Which students were absent today?', 'List overdue fees and suggest a reminder message', 'How did the last exams go?', 'Which students have attendance below 85%?', 'How many notifications did we send this week?']);
 };
 
@@ -433,7 +433,7 @@ PAGES.students = async (el) => {
         { name: 'parent_id', label: 'Parent account', type: 'select', full: true, options: [[0, '➕ Create a new parent account below'], ...parents.map((p) => [p.id, `${p.name} · ${p.email}`])] },
       ], s) + `<div id="newParent" class="form-grid" style="${s.parent_id ? 'display:none' : ''}">
         ${field({ name: 'parent_name', label: 'Parent name' })}${field({ name: 'parent_phone', label: 'Parent mobile', placeholder: '07X XXX XXXX' })}
-        ${field({ name: 'parent_email', label: 'Parent login email' })}${field({ name: 'parent_password', label: 'Parent password', hint: 'Share this with the parent so they can sign in to the app.' })}
+        ${field({ name: 'parent_email', label: 'Parent login email' })}${field({ name: 'parent_password', label: 'Parent password', hint: 'Required for a new parent: at least 8 characters. Share it with the parent so they can sign in to the app.' })}
         ${field({ name: 'parent_language', label: "Parent's language", type: 'select', options: ['English', 'Sinhala', 'Tamil'] })}
       </div>`,
       onOpen: (f) => { f.elements.parent_id.onchange = () => { $('#newParent', f).style.display = f.elements.parent_id.value == 0 ? '' : 'none'; }; },
@@ -708,7 +708,7 @@ PAGES.settings = async (el) => {
         { name: 'school_address', label: 'Address', full: true }], s)}</div></div>
       <div class="card"><div class="card-h"><h3>Integrations</h3></div><div class="card-b">
         <div class="list-item" style="padding:8px 0"><div class="ic tint-blue">${icon('bell')}</div><div class="grow"><div class="t1">Notifications</div><div class="t2">In-app notifications only</div></div></div>
-        <div class="list-item" style="padding:8px 0"><div class="ic tint-violet">${icon('sparkle')}</div><div class="grow"><div class="t1">AI (Claude)</div><div class="t2">${esc(s.providers.ai)}</div></div></div>
+        <div class="list-item" style="padding:8px 0"><div class="ic tint-violet">${icon('sparkle')}</div><div class="grow"><div class="t1">AI (Google Gemini)</div><div class="t2">${esc(s.providers.ai)}</div></div></div>
         <p class="muted small">The AI key is configured in the server's <code>.env</code> file (see README).</p>
       </div></div>
     </div>

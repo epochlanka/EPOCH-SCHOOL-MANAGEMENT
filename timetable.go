@@ -423,9 +423,23 @@ func (a *App) handleSaveClassSubject(w http.ResponseWriter, r *http.Request, u *
 		serverError(w, err)
 		return
 	}
-	// Keep already-generated periods in step with the new teacher.
-	a.db.Exec(`UPDATE timetable SET teacher_id=? WHERE class_id=? AND subject_id=?`, nullID(req.TeacherID), req.ClassID, req.SubjectID)
-	writeJSON(w, 200, map[string]bool{"ok": true})
+	// Keep already-generated periods in step with the new teacher. Periods where the new
+	// teacher already has another class are taken off the timetable rather than double-booked;
+	// regenerating the timetable places them again.
+	var removed int64
+	if req.TeacherID > 0 {
+		res, _ := a.db.Exec(`DELETE FROM timetable t WHERE t.class_id=? AND t.subject_id=? AND EXISTS (SELECT 1 FROM timetable o
+			WHERE o.teacher_id=? AND o.day=t.day AND o.period=t.period AND o.class_id<>t.class_id)`, req.ClassID, req.SubjectID, req.TeacherID)
+		if res != nil {
+			removed, _ = res.RowsAffected()
+		}
+	}
+	res, _ := a.db.Exec(`UPDATE timetable SET teacher_id=? WHERE class_id=? AND subject_id=? AND teacher_id IS DISTINCT FROM ?`,
+		nullID(req.TeacherID), req.ClassID, req.SubjectID, nullID(req.TeacherID))
+	if changed, _ := res.RowsAffected(); changed > 0 || removed > 0 {
+		a.refreshCover()
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "removed_periods": removed})
 }
 
 func (a *App) handleDeleteClassSubject(w http.ResponseWriter, r *http.Request, u *User) {

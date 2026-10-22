@@ -15,7 +15,7 @@ import (
 // Progress report: a plain-language view of how a child is doing — attendance trend,
 // each subject against the class average and their own last result, upcoming
 // homework, teacher remarks, strengths, areas needing support and next steps — in
-// the reader's language. With AI enabled the summary is written by Claude (cached
+// the reader's language. With AI enabled the summary is written by Gemini (cached
 // once per child, language and day); otherwise it is assembled from rules.
 
 type subjectProgress struct {
@@ -186,7 +186,9 @@ func (a *App) handleProgress(w http.ResponseWriter, r *http.Request, u *User) {
 	if r.URL.Query().Get("ai") == "1" && a.ai.enabled {
 		var cached string
 		a.db.QueryRow(`SELECT text FROM progress_summaries WHERE student_id=? AND language=? AND date=?`, sid, lang, t).Scan(&cached)
-		if cached == "" {
+		if cached == "" && !a.ai.allow(u) {
+			out["ai_error"] = errAIBusy.Error()
+		} else if cached == "" {
 			facts, _ := json.Marshal(map[string]any{"student": student["name"], "class": student["class_name"], "attendance_last_30_days": attendance,
 				"subjects": subjects, "teacher_remarks": remarks, "upcoming_homework": homework})
 			system := "You write short progress summaries of a school child for their parents in Sri Lanka. " + a.schoolContext() + `
@@ -194,7 +196,7 @@ Write in ` + lang + ` (native script), warm, honest and plain — no jargon, no 
 Cover how attendance is going, strengths, areas that need support, and finish with 2–3 concrete things the family can do at home.
 Use only the facts given; do not invent marks, events or diagnoses. Subject names may stay as given. Return only the summary text.`
 			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-			text, err := a.ai.complete(ctx, system, "Facts:\n"+string(facts), "low", nil)
+			text, err := a.ai.complete(ctx, system, "Facts:\n"+string(facts), nil)
 			cancel()
 			if err == nil && text != "" {
 				cached = text

@@ -1,7 +1,7 @@
 # Epoch School Connect
 
 School communication and management system by **Epoch** (Gongawela Bus Station Complex, Matale · 076 843 7970).
-It sends parents, students and staff in-app notifications, runs the day-to-day school records behind them, and has a built-in AI assistant powered by Claude.
+It sends parents, students and staff in-app notifications, runs the day-to-day school records behind them, and has a built-in AI assistant powered by Google Gemini.
 
 It is a single Go binary with the HTML/CSS/JS frontend embedded. The data is stored in PostgreSQL.
 
@@ -18,7 +18,7 @@ It is a single Go binary with the HTML/CSS/JS frontend embedded. The data is sto
 | **Transport** | Routes, buses, drivers, and one-tap bus updates ("running late", "reached school") |
 | **Reports & history** | Delivery log for every message, broken down by channel, status and category, with CSV export |
 | **Parent & student app** | Mobile-style portal: today's status, attendance, fees, diary, exams, results, bus, notices, chat |
-| **Epoch AI (Claude)** | Writes messages from a short description (English, Sinhala, Tamil or all three), translates, suggests chat replies, and answers questions using live school data. Parents only see data for their own children |
+| **Epoch AI (Google Gemini)** | Writes messages from a short description (English, Sinhala, Tamil or all three), translates, suggests chat replies, and answers questions using live school data. Parents only see data for their own children |
 | **Automatic timetables** | Allocate subjects, teachers and periods per week to each class, then generate a clash-free weekly timetable in one click. Subjects are spread across the week (at most two periods a day), and single periods can be edited by hand with clash checking |
 | **Teacher attendance** | Staff check in and out from "My Day" (arrivals after a set time are marked late), or the office marks the register. The dashboard shows who is present, late, absent or on leave |
 | **Leave approval** | Staff apply for leave; the principal, vice principal or head of section approves or rejects it with a note. The staff member is notified either way |
@@ -99,7 +99,7 @@ Go 1.27+ is required (see `go.mod`).
 
 ### Demo logins (when `SEED_DEMO=true`)
 
-All demo accounts use the password `epoch123`, and so does the admin unless you set `ADMIN_PASSWORD`. **Change them before going live.**
+All demo accounts use the password `epoch123`, and so does the admin unless you set `ADMIN_PASSWORD`. `./dev.sh` turns the demo on; the server on its own does not. **Never run the demo on the live site.**
 
 | Role | Email | Can do |
 |---|---|---|
@@ -121,7 +121,7 @@ Every staff member also has **My Day** (check in/out, today's periods, relief du
 
 To get the full demo school again, start with an empty database (`dropdb epoch && createdb epoch`) and `SEED_DEMO=true`.
 
-For a real school, set `SEED_DEMO=false` and a strong `ADMIN_PASSWORD` **before the first run**. Then add classes, teachers, students and parents from the admin console. You can create each parent's login in the same step as adding their child.
+For a real school, leave `SEED_DEMO` off (the default) and set a strong `ADMIN_PASSWORD` (at least 8 characters) **before the first run**; the server refuses to start on an empty database without one. Then add classes, teachers, students and parents from the admin console. You can create each parent's login in the same step as adding their child.
 
 ## Configuration
 
@@ -129,8 +129,8 @@ All settings are environment variables (or a `.env` file). See [.env.example](.e
 
 ### AI
 
-Set `ANTHROPIC_API_KEY` to enable Epoch AI. The default model is `claude-opus-5-5` (change it with `AI_MODEL`).
-Requests opt into Anthropic's server-side refusal fallback (`fallbacks: "default"`), so a falsely declined request is retried on a fallback model instead of failing.
+Set `GEMINI_API_KEY` (create one at https://aistudio.google.com/apikey) to enable Epoch AI. The default model is `gemini-3.8-flash`; change it with `AI_MODEL` (for example `gemini-4-argon`, which is more capable but needs a paid plan).
+Each person can make up to 300 AI requests an hour (staff) or 40 (parents and students), which keeps the API bill predictable.
 
 ### Notifications
 
@@ -197,7 +197,7 @@ handlers_admin.go    dashboard, users, classes, routes, students, settings
 handlers_academic.go attendance, fees and reminders, homework, exams and results
 handlers_comm.go     announcements, notifications, messaging, reports, portal, scheduler
 notify.go            notification engine (in-app only)
-ai.go                Claude integration (compose, translate, reply, tool-using assistant)
+ai.go                Google Gemini integration (compose, translate, reply, tool-using assistant)
 roles.go             roles, permissions and per-class scoping
 timetable.go         subjects, allocation, timetable generator, sections
 staff.go             teacher attendance, leave, relief-teacher assignment, My Day

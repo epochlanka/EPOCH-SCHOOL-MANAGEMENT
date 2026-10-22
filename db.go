@@ -549,7 +549,14 @@ func (a *App) seed() error {
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n); err != nil || n > 0 {
 		return err
 	}
-	hash, err := hashPassword(a.cfg.AdminPassword)
+	password := a.cfg.AdminPassword
+	switch {
+	case password == "" && a.cfg.SeedDemo:
+		password = "epoch123"
+	case len(password) < 8 || password == "change-me-now":
+		return errors.New("set ADMIN_PASSWORD to a strong password (at least 8 characters) in .env before the first start")
+	}
+	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}

@@ -113,8 +113,8 @@ func (a *App) handleEnrol(w http.ResponseWriter, r *http.Request, u *User) {
 	defer tx.Rollback()
 	var parentID int64
 	if err := tx.QueryRow(`SELECT id FROM users WHERE lower(email)=lower(?) AND role='parent'`, strings.TrimSpace(req.ParentEmail)).Scan(&parentID); err == sql.ErrNoRows {
-		if len(req.ParentPassword) < 6 {
-			errJSON(w, 400, "Set a parent password of at least 6 characters")
+		if len(req.ParentPassword) < 8 {
+			errJSON(w, 400, "Set a parent password of at least 8 characters")
 			return
 		}
 		hash, _ := hashPassword(req.ParentPassword)
@@ -125,11 +125,13 @@ func (a *App) handleEnrol(w http.ResponseWriter, r *http.Request, u *User) {
 			return
 		}
 	}
-	var maxID int64
-	tx.QueryRow(`SELECT COALESCE(MAX(id),0) FROM students`).Scan(&maxID)
 	sid, err := tx.InsertID(`INSERT INTO students(admission_no,name,class_id,parent_id,gender,dob,created_at) VALUES(?,?,?,?,?,?,?)`,
-		fmt.Sprintf("EP%04d", 1001+maxID), child, req.ClassID, parentID, gender, dob, now())
+		nextAdmissionNo(tx), child, req.ClassID, parentID, gender, dob, now())
 	if err != nil {
+		if isUniqueViolation(err) {
+			errJSON(w, 409, "Someone enrolled another student at the same moment; please try again")
+			return
+		}
 		serverError(w, err)
 		return
 	}
@@ -276,4 +278,14 @@ func (a *App) handleRemindOverdueBooks(w http.ResponseWriter, r *http.Request, u
 		a.db.Exec(`UPDATE loans SET last_reminded=? WHERE id=?`, t, x.id)
 	}
 	writeJSON(w, 200, map[string]int{"reminded": len(list)})
+}
+
+// nextAdmissionNo returns the next free admission number (EP1001, EP1002, ...), counting
+// from the highest one in use rather than from row ids, so hand-typed numbers are respected.
+func nextAdmissionNo(q interface {
+	QueryRow(string, ...any) *sql.Row
+}) string {
+	var n int64
+	q.QueryRow(`SELECT COALESCE(MAX(substring(admission_no from '^EP([0-9]+)$')::bigint), 1000) + 1 FROM students`).Scan(&n)
+	return fmt.Sprintf("EP%04d", n)
 }

@@ -202,11 +202,28 @@ func (a *App) handleCreateFees(w http.ResponseWriter, r *http.Request, u *User) 
 		errJSON(w, 400, "No students selected")
 		return
 	}
+	// All or nothing: a failure part-way must not leave some students charged and others not.
+	tx, err := a.db.Begin()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback()
 	for _, sid := range ids {
-		if _, err := a.db.Exec(`INSERT INTO fees(student_id,title,amount,due_date,created_at) VALUES(?,?,?,?,?)`, sid, req.Title, req.Amount, req.DueDate, now()); err != nil {
+		var exists int
+		tx.QueryRow(`SELECT COUNT(*) FROM students WHERE id=?`, sid).Scan(&exists)
+		if exists == 0 {
+			errJSON(w, 400, fmt.Sprintf("Student %d not found", sid))
+			return
+		}
+		if _, err := tx.Exec(`INSERT INTO fees(student_id,title,amount,due_date,created_at) VALUES(?,?,?,?,?)`, sid, req.Title, req.Amount, req.DueDate, now()); err != nil {
 			serverError(w, err)
 			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		serverError(w, err)
+		return
 	}
 	sent := 0
 	if req.Notify {
@@ -230,8 +247,14 @@ func (a *App) handlePayFee(w http.ResponseWriter, r *http.Request, u *User) {
 		errJSON(w, 404, "Unpaid fee not found")
 		return
 	}
-	if _, err := a.db.Exec(`UPDATE fees SET status='paid', paid_at=? WHERE id=?`, now(), id); err != nil {
+	// Only the request that actually changes the fee to paid sends a receipt.
+	res, err := a.db.Exec(`UPDATE fees SET status='paid', paid_at=? WHERE id=? AND status='unpaid'`, now(), id)
+	if err != nil {
 		serverError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		errJSON(w, 409, "This fee has already been recorded as paid")
 		return
 	}
 	if parentID.Valid {
@@ -527,10 +550,17 @@ func (a *App) handleSaveResults(w http.ResponseWriter, r *http.Request, u *User)
 	var subject, title string
 	var maxMarks float64
 	var published int
-	if err := a.db.QueryRow(`SELECT subject,title,max_marks,published FROM exams WHERE id=?`, id).Scan(&subject, &title, &maxMarks, &published); err != nil {
+	var classID int64
+	if err := a.db.QueryRow(`SELECT subject,title,max_marks,published,class_id FROM exams WHERE id=?`, id).Scan(&subject, &title, &maxMarks, &published, &classID); err != nil {
 		errJSON(w, 404, "Exam not found")
 		return
 	}
+	tx, err := a.db.Begin()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback()
 	for _, rec := range req.Records {
 		if rec.Marks == nil {
 			continue
@@ -539,12 +569,23 @@ func (a *App) handleSaveResults(w http.ResponseWriter, r *http.Request, u *User)
 			errJSON(w, 400, fmt.Sprintf("Marks must be between 0 and %g", maxMarks))
 			return
 		}
-		if _, err := a.db.Exec(`INSERT INTO results(exam_id,student_id,marks,remarks) VALUES(?,?,?,?)
+		// Marks can only be entered for students in the exam's class.
+		var inClass int
+		tx.QueryRow(`SELECT COUNT(*) FROM students WHERE id=? AND class_id=?`, rec.StudentID, classID).Scan(&inClass)
+		if inClass == 0 {
+			errJSON(w, 400, "A student in this list is not in the exam's class")
+			return
+		}
+		if _, err := tx.Exec(`INSERT INTO results(exam_id,student_id,marks,remarks) VALUES(?,?,?,?)
 			ON CONFLICT(exam_id,student_id) DO UPDATE SET marks=excluded.marks, remarks=excluded.remarks`,
 			id, rec.StudentID, *rec.Marks, rec.Remarks); err != nil {
 			serverError(w, err)
 			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		serverError(w, err)
+		return
 	}
 	sent := 0
 	if req.Publish {

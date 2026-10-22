@@ -65,10 +65,10 @@ func loadConfig() Config {
 		TZ:           env("TZ", "Asia/Colombo"),
 		CountryCode:  env("DEFAULT_COUNTRY_CODE", "94"),
 		SecureCookie: env("SECURE_COOKIE", "false") == "true",
-		SeedDemo:     env("SEED_DEMO", "true") == "true",
+		SeedDemo:     env("SEED_DEMO", "false") == "true",
 
 		AdminEmail:    env("ADMIN_EMAIL", "admin@epoch.lk"),
-		AdminPassword: env("ADMIN_PASSWORD", "epoch123"),
+		AdminPassword: env("ADMIN_PASSWORD", ""),
 
 		SMSProvider:     env("SMS_PROVIDER", "log"),
 		NotifyLKUserID:  env("NOTIFYLK_USER_ID", ""),
@@ -90,7 +90,7 @@ func loadConfig() Config {
 		WAAPIToken:     env("WAAPI_TOKEN", ""),
 		WAAPIInstance:  env("WAAPI_INSTANCE_ID", ""),
 
-		AIModel: env("AI_MODEL", "claude-opus-5-5"),
+		AIModel: env("AI_MODEL", "gemini-3.8-flash"),
 
 		PushPublicKey:  env("WEBPUSH_PUBLIC_KEY", ""),
 		PushPrivateKey: env("WEBPUSH_PRIVATE_KEY", ""),
